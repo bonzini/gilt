@@ -1,13 +1,12 @@
 #! /bin/sh
 
 # TODO: test
-#   abort        rebase, dcommit
 #   branch       with remote branch
 #   dcommit
 #   push
-#   rebase
 
 # test done for:
+#   abort
 #   add
 #   branch       -d, -D, create new branch
 #   checkout     basic, -b with switch, from reset
@@ -16,6 +15,7 @@
 #   import
 #   init (with and without arguments)
 #   log
+#   rebase
 #   reset
 #   rm
 #   show
@@ -26,7 +26,7 @@
 # commit --amend
 # commit -m/-F
 # import -m/-F
-# avoid forking on dirname
+# avoid forking on dirname/basename
 
 # Shell sanitization
 # ------------------
@@ -828,20 +828,17 @@ cmd_rebase ()
     conflict_solved=false
   fi
   i=${FIRSTPATCH:-1}
-eval `read`
   while :; do
     patchfile=$GILTROOT/${GILTHEAD#rebase-}/patches/$i
     test -f "$patchfile" || break
     echo Committing patch $i...
     $conflict_solved || {
-eval `read`
       rm -rf "$GILTROOT/$GILTHEAD/base" 
       mv "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
       cp -R "$GILTROOT/$GILTHEAD/base" "$GILTROOT/$GILTHEAD/next" 
       (cd "$GILTROOT/$GILTHEAD/next" && patch -p0 < "$patchfile" > /dev/null)
       rm -rf "$GILTROOT/$GILTHEAD/tree-next"
       cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
-eval `read`
       (cd "$GILTROOT/$GILTHEAD/tree-next" && patch -p0 < "$patchfile" > /dev/null) || {
         # Got conflicts
         gilt_modified_files | while read file; do
@@ -849,8 +846,7 @@ eval `read`
 	  older=$GILTROOT/$GILTHEAD/base/$file
 	  next=$GILTROOT/$GILTHEAD/next/$file
           rm -f "$src~"
-          if $DIFF -u "$older" "$next" | patch "$src" > /dev/null; then
-            rm -f "$src~"
+          if $DIFF -u "$older" "$next" | patch "$src" -o "$src.new" > /dev/null; then
             echo "M	$file"
 	  else
 	    # Is there a way to mark it as conflicted in subversion?!?
@@ -858,9 +854,9 @@ eval `read`
 	    echo "C	$file"
             diff3 -m -E "--diff-program=$DIFF" \
 	      -L svn -L "patch $((i - 1))" -L "patch $i" \
-	       "$src~" "$older" "$next" > "$src"
-            rm -f "$src~"
+	       "$src" "$older" "$next" > "$src.new"
           fi
+          mv "$src.new" "$src"
         done
         exit 1
       }
@@ -870,7 +866,6 @@ eval `read`
       done
     }
 
-eval `read`
     gilt_has_changes || {
       extract_commit_msg "$patchfile" > "$GILTROOT/log"
       do_commit 'cat "$GILTROOT/log"'
@@ -884,14 +879,16 @@ eval `read`
     conflict_solved=false
   done
   mark_in_progress
-  #mv "$GILTROOT/$GILTHEAD" "$GILTROOT/save-$GILTHEAD"
-  #mv "$GILTROOT/rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
-  #rm -rf "$GILTROOT/save-$GILTHEAD"
-  #rm -rf "$GILTROOT/$GILTHEAD/base"
-  #rm -rf "$GILTROOT/$GILTHEAD/tree-next"
-  #FIRSTPATCH=
-  #save "${GILTHEAD#rebase-}"
-  #update_head "${GILTHEAD#rebase-}"
+  GILTHEAD=${GILTHEAD#rebase-}
+  mv "$GILTROOT/$GILTHEAD" "$GILTROOT/save-$GILTHEAD"
+  mv "$GILTROOT/rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
+  rm -rf "$GILTROOT/save-$GILTHEAD"
+  rm -rf "$GILTROOT/$GILTHEAD/base"
+  rm -rf "$GILTROOT/$GILTHEAD/next"
+  rm -rf "$GILTROOT/$GILTHEAD/tree-next"
+  FIRSTPATCH=
+  save "$GILTHEAD"
+  update_head "$GILTHEAD"
 }
 
 abort_rebase ()
