@@ -634,7 +634,7 @@ cmd_checkout ()
       done); then
         :
     else
-      doit reset --force
+      doit cmd_reset --force
       error errors occurred, no gilt branch is currently checked out
     fi
   fi
