@@ -491,8 +491,10 @@ do_rm ()
   test -f "$GILTROOT/$GILTHEAD/tree/$1" || error untracked file
   cmp "$SVNTOP/$1" "$GILTROOT/$GILTHEAD/tree/$1" > /dev/null || \
     error file "$1" has changes
-  if grep -xF "Index: $1" "$GILTROOT/$GILTHEAD"/patches/* > /dev/null; then
-    error patches have changes for "$1"
+  if test "$NUMPATCHES" -gt 0; then
+    if grep -xF "Index: $1" "$GILTROOT/$GILTHEAD"/patches/* > /dev/null; then
+      error patches have changes for "$1"
+    fi
   fi
   doit rm -f "$GILTROOT/$GILTHEAD/tree/$1"
   notquiet echo "R	$1"
