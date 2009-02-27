@@ -688,7 +688,8 @@ cmd_dcommit ()
   while test $i -le $NUMPATCHES; do
     echo Committing patch $i/$NUMPATCHES...
     patchfile=$GILTROOT/$GILTHEAD/patches/$i
-    patch -p0 --dry-run < "$patchfile" || error 'conflicts, please rebase'
+    patch -p0 --dry-run < "$patchfile" || \
+      { doit start_rebase; error conflicts, please rebase and continue; }
     i=$(($i + 1))
     BASEREV=`svn_info Revision`
     FIRSTPATCH=$i
@@ -706,7 +707,12 @@ cmd_dcommit ()
 
 abort_dcommit ()
 {
-  error sorry, unimplemented
+  echo you should not have arrived here unless you halted the
+  echo commit.  the only way out is to perform a rebase.
+  echo type Ctrl-C to abort, or return to continue.
+  read
+  start_rebase
+  cmd_rebase
 }
 
 cmd_diff ()
