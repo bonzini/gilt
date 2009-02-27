@@ -875,7 +875,6 @@ abort_rebase ()
 cmd_reset ()
 {
   local force soft
-  get_gilt_info
   force=false
   soft=false
   for i
@@ -887,7 +886,10 @@ cmd_reset ()
     esac
   done
   cd "$SVNTOP"
-  $force || check_no_changes cannot reset
+  $force || {
+    get_gilt_info
+    check_no_changes cannot reset
+  }
   $soft || doit svn_revert
   doit rm -f "$GILTROOT"/HEAD
 }
