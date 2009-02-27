@@ -1032,7 +1032,8 @@ case $cmdname in
 esac
 
 get_svn_info
-if test "$cmdname" != abort; then
-  test_in_progress "$cmdname" 
-fi
+case $cmdname in
+  abort | diff | log | show | status ) ;;
+  *) test_in_progress "$cmdname" 
+esac
 eval cmd_$cmdname \"\$@\"
