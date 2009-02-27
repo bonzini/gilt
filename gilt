@@ -259,6 +259,9 @@ get_gilt_info () {
         fi
       fi
       ;;
+    */*)
+      error bad branch name
+      ;;
     *)
       if test -d "$GILTROOT"; then
         GILTHEAD="$1"
@@ -576,7 +579,10 @@ cmd_branch ()
       ;;
     *)
       get_gilt_info --init
-      test -d "$1" && error branch "\`$1'" already exists
+      case "$1" in
+        */*) error invalid character name in branch ;;
+        *) test -d "$1" && error branch "\`$1'" already exists ;;
+      esac
       set -e
       NUMPATCHES=0
       BRANCH=${2-$SVNBRANCH}
