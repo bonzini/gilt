@@ -478,6 +478,7 @@ do_add ()
 {
   local dir file
   test -f "$GILTROOT/$GILTHEAD/tree/$1" && return 0
+  test -d "$SVNTOP/$1" && return 0
   oldwd=$PWD
   cd "$SVNTOP"
   doit reconstruct tree "$1"
@@ -672,6 +673,8 @@ cmd_commit ()
     test "$#" -gt 1 && error cannot pass -a and files together
     doit cmd_add $qv -a
     shift
+  elif test "$#" -gt 0; then
+    doit cmd_add $qv "$@"
   fi
   do_commit 'echo' "$@"
 }
