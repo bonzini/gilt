@@ -76,7 +76,7 @@ usage () {
   echo '  log [-r|--reverse] [BRANCH]  concatenate all the logs in the branch'
   echo '  show [BRANCH] [NUMBER]       show one patch in a branch (default last)'
   echo '  show -a [BRANCH]             show all patches in a branch'
-  echo                 
+  echo '  status [FILE...]             print changed files with tip of current branch'
   echo
   echo 'Synchronization:'
   echo '  abort                        abort in progress operations'
@@ -692,14 +692,14 @@ cmd_dcommit ()
     echo Committing patch $i/$NUMPATCHES...
     patchfile=$GILTROOT/$GILTHEAD/patches/$i
     $PATCH -p0 --dry-run < "$patchfile" || \
-      { doit start_rebase; error conflicts, please rebase and continue; }
+      { mark_in_progress; echo conflicts, starting rebase; exec cmd_rebase; }
     i=$(($i + 1))
     BASEREV=`svn_info Revision`
     FIRSTPATCH=$i
     doit save
     doit $PATCH -p0 < "$patchfile"
     { doit svn commit "`extract_commit_msg "$patchfile"`"; } || \
-      { doit start_rebase; error concurrent commit, please rebase and continue; }
+      { mark_in_progress; echo concurrent commit, trying to rebase...; cmd_rebase; }
   done
   gilt_modified_files | while read line; do
     doit reconstruct tree "$file"
