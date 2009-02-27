@@ -4,7 +4,7 @@
 #   abort        rebase, dcommit
 #   branch       with remote branch
 #   dcommit
-#   import
+#   push
 #   rebase
 
 # test done for:
@@ -13,9 +13,9 @@
 #   checkout     basic, -b with switch, from reset
 #   commit
 #   diff
+#   import
 #   init (with and without arguments)
 #   log
-#   push
 #   reset
 #   rm
 #   show
@@ -69,7 +69,7 @@ usage () {
   echo '  checkout BRANCH              start working on the given local branch'
   echo '  checkout -b BRANCH [SVN-BRANCH] start working on a new local branch'
   echo '  commit [-a | FILE...]        commit changes on top of current branch'
-  echo '  import PATCH-OPTS [< FILE]   add a patch on top of current branch'
+  echo '  import [-pN] FILE            add a patch on top of current branch'
   echo '  rm [FILE...]                 do not track content of the files'
   echo
   echo 'Showing information:'
@@ -709,11 +709,31 @@ cmd_diff ()
 
 cmd_import ()
 {
-  get_gilt_info --need-branch
+  local plevel patchfile branchname
+  get_gilt_info
   # TODO: add common handling of -m and -F to commit and import
-  patch "$dry_run" "$@"
+  # TODO: add -R
+  case "$1" in
+    -p*) plevel=$1 ; shift ;;
+    *) plevel=-p0 ;;
+  esac
+  test $# = 1 || error usage: gilt patch '[-pN]' FILE
+  patchfile="$1"
+  patch -f --dry-run "$plevel" < "$patchfile"
+  case $? in
+    1) error patch does not apply cleanly, aborting ;;
+    2) exit 1 ;;
+  esac
+  set -e
+  if test -z "$GILTHEAD"; then
+    branchname=`basename "$branchname"`
+    branchname=${1%.*}
+    notquiet echo not on a gilt branch, creating branch "$branchname"
+    cmd_checkout -b "$branchname"
+  fi
+  doit patch -f "$plevel" < "$patchfile" > /dev/null
   doit cmd_add $qv -a
-  do_commit 'echo'
+  doit do_commit 'extract_commit_msg "$patchfile"'
 }
 
 cmd_init ()
