@@ -277,17 +277,29 @@ get_gilt_info () {
 
 make_svn_absolute_path ()
 {
+  local oldwd
   case $2 in
-    $SVNTOP/*) eval $1='${2#$SVNTOP/}' ;;
+    $SVNTOP/*) eval $1='${2#$SVNTOP}' ;;
     /*) return 1;;
-    *)
-      if (dir=`dirname "$file"`; cd "$dir" && is_parent_of_pwd $SVNTOP); then
-	eval $1='$SVNSUBDIR/$2'
-	eval $1='${'$1'#/}'
+    .*[!/] | [!.]*)			# not . or ./ or .// etc.
+      oldwd=$PWD
+      if test -d "$2"; then
+        dir=$2
+        file=
       else
-	return 1
-      fi ;;
+        dir=`dirname "$2"`
+        file=/`basename "$2"`
+      fi
+      cd "$dir"
+      is_parent_of_pwd $SVNTOP || return 1
+      eval $1='${PWD#$SVNTOP}$file'
+      cd "$oldwd"
+      ;;
+    *)					# . or ./ or .// etc.
+      eval $1='$SVNSUBDIR'
+      ;;
   esac
+  eval $1='${'$1'#/}'
 }
 
 files_in_patch () {
@@ -327,7 +339,7 @@ check_no_changes ()
 
 gilt_has_changes ()
 {
-  gilt_modified_files | (while read file; do
+  gilt_modified_files "$@" | (while read file; do
     cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null 2>&1 || exit 1
   done)
 }
@@ -411,7 +423,29 @@ test_in_progress ()
 
 gilt_modified_files ()
 {
-  (cd "$GILTROOT/$GILTHEAD/tree" && find . -type f | sed 's,^\./,,')
+  local absfile regex escape_regex
+  escape_regex='s,[][\\/.*^$],\\&,g'
+  (cd "$GILTROOT/$GILTHEAD/tree" && find . -type f) |
+  if test $# = 0; then
+    sed 's,^\./,,'
+  else
+    regex=
+    for i
+    do
+      make_svn_absolute_path absfile $i || error file not in the svn repository
+      if test -z "$absfile"; then
+        regex=^
+        break
+      fi
+      absfile=`echo "$absfile" | sed "$escape_regex" `
+      if test -d "$SVNTOP/$absfile"; then  
+        regex="$regex${regex:+|}^$absfile\\/"
+      else
+        regex="$regex${regex:+|}^$absfile\$"
+      fi
+    done
+    sed -ne 's,^\./,,' -e "/$regex/p"
+  fi
 }
 
 do_commit ()
@@ -655,12 +689,9 @@ cmd_diff ()
     cd $SVNTOP
     SVNSUBDIR=
     set .
-  else
-    # TODO: grep on the output of find (that's why there's a 'set .' above)
-    error sorry, unimplemented
   fi
   if test "$qv" != -q; then
-    gilt_modified_files | while read file; do
+    gilt_modified_files "$@" | while read file; do
       cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null 2>&1 && continue
       echo "Index: $file"
       echo '==================================================================='
@@ -669,7 +700,7 @@ cmd_diff ()
 	"$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file"
     done
   fi
-  gilt_has_changes
+  gilt_has_changes "$@"
   exit $?
 }
 
@@ -887,11 +918,8 @@ cmd_status ()
     cd $SVNTOP
     SVNSUBDIR=
     set .
-  else
-    # TODO: grep on the output of find (that's why there's a 'set .' above)
-    error sorry, unimplemented
   fi
-  gilt_modified_files | while read file; do
+  gilt_modified_files "$@" | while read file; do
     cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null || echo "M	$file"
   done
 }
