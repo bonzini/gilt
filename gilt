@@ -104,7 +104,7 @@ usage () {
 #        ...
 #
 # Data in the INFO file:
-# BASEURL=<svn branch url>
+# BRANCH=<svn branch url>
 # BASEREV=<svn base rev>
 # NUMPATCHES=<number of patches>
 #
@@ -240,7 +240,7 @@ get_svn_info () {
 
 # get_gilt_info [--init|--need-branch|BRANCH]
 # set GILTROOT, GILTHEAD
-# optionally set BASEURL, BASEREV, NUMPATCHES
+# optionally set BRANCH, BASEREV, NUMPATCHES
 get_gilt_info () {
   case "$1" in
     '' | --*)
@@ -352,7 +352,7 @@ check_no_svn_changes ()
 save ()
 {
   cat > "$GILTROOT/${1-$GILTHEAD}/INFO" <<EOF
-BASEURL='`echo $BASEURL | sed "s/'/'\\\\''/g"`'
+BRANCH='`echo $BRANCH | sed "s/'/'\\\\''/g"`'
 BASEREV='`echo $BASEREV | sed "s/'/'\\\\''/g"`'
 NUMPATCHES='`echo $NUMPATCHES | sed "s/'/'\\\\''/g"`'
 FIRSTPATCH='`echo $FIRSTPATCH | sed "s/'/'\\\\''/g"`'
@@ -468,7 +468,7 @@ clear_stack ()
 {
   NUMPATCHES=0
   FIRSTPATCH=
-  BASEREV=`svn info $BASEURL | sed -n 's/Revision: //'`
+  BASEREV=`svn info $SVNROOT/$BRANCH | sed -n 's/Revision: //'`
   doit rm -rf "$GILTROOT/GILTHEAD"/patches/*
   doit save
 }
@@ -478,8 +478,8 @@ start_rebase ()
   rm -rf "$GILTROOT/rebase-$GILTHEAD"
   doit cp -R "$GILTROOT/$GILTHEAD" "$GILTROOT/rebase-$GILTHEAD"
   if test "$#" -gt 0; then
-    BASEURL=$SVNROOT/${1-SVNBRANCH}
-    BASEREV=`svn info $BASEURL | sed -n 's/Revision: //p'`
+    BRANCH=${1-SVNBRANCH}
+    BASEREV=`svn info $SVNROOT/$BRANCH | sed -n 's/Revision: //p'`
   fi
   doit save "rebase-$GILTHEAD"
   mark_in_progress rebase
@@ -543,11 +543,11 @@ cmd_branch ()
       test -d "$1" && error branch "\`$1'" already exists
       set -e
       NUMPATCHES=0
-      BASEURL=$SVNROOT/${2-$SVNBRANCH}
-      if test "${2-$SVNBRANCH}" != "$SVNBRANCH"; then
+      BRANCH=${2-$SVNBRANCH}
+      if test "$BRANCH" != "$SVNBRANCH"; then
 	check_no_changes please commit them before switching branch
         doit svn_revert
-        doit svn switch $qv $BASEURL
+        doit svn switch $qv $SVNROOT/$BRANCH
       fi
       BASEREV=`svn_info Revision`
       doit mkdir_p "$GILTROOT/$1/patches"
@@ -583,8 +583,8 @@ cmd_checkout ()
 
       # Make sure to work disconnected if possible
       currev=`svn_info Revision`
-      if test "${BASEURL#$SVNROOT/}:$BASEREV" != "$SVNBRANCH:$currev"; then
-        doit svn switch $qv -r$BASEREV $BASEURL
+      if test "$BRANCH:$BASEREV" != "$SVNBRANCH:$currev"; then
+        doit svn switch $qv -r$BASEREV $SVNROOT/$BRANCH
       fi
       gilt_modified_files | while read file; do
         notquiet cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null || echo "M	$file"
@@ -748,7 +748,7 @@ cmd_rebase ()
     doit reconstruct next "$file"
   done
   if test "$#" -gt 0; then
-    svn switch $BASEURL
+    svn switch $SVNROOT/$BRANCH
   else
     svn update
   fi
