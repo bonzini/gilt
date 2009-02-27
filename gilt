@@ -418,10 +418,10 @@ mark_in_progress ()
 test_in_progress ()
 {
   local op
-  test -f "$GILTROOT/.in-progress" || return 0
-  op=`cat "$GILTROOT/.in-progress"` = "$1" && return 0
-  test $op = "$1" && return 0
-  error $op in progress, continue or abort
+  test -f "$GILTROOT/.in-progress" || return 1
+  op=`cat "$GILTROOT/.in-progress"`
+  test $op = "$1" || error $op in progress, continue or abort
+  return 0
 }
 
 gilt_modified_files ()
@@ -512,15 +512,34 @@ clear_stack ()
   doit save
 }
 
+update_head ()
+{
+  doit eval echo \""$1"\" \> \"\$GILTROOT/HEAD\"
+}
+
 start_rebase ()
 {
   rm -rf "$GILTROOT/rebase-$GILTHEAD"
-  doit cp -R "$GILTROOT/$GILTHEAD" "$GILTROOT/rebase-$GILTHEAD"
+  mkdir_p "$GILTROOT/rebase-$GILTHEAD/patches"
+  cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/rebase-$GILTHEAD/tree"
+  cmd_reset --force
+  GILTHEAD=rebase-$GILTHEAD
+  gilt_modified_files | while read file; do
+    reconstruct next "$file"
+  done
   if test "$#" -gt 0; then
     BRANCH=${1-SVNBRANCH}
-    BASEREV=`svn info $SVNROOT/$BRANCH | sed -n 's/Revision: //p'`
+    svn switch ${qv} $SVNROOT/$BRANCH
+  else
+    svn update ${qv}
   fi
-  doit save "rebase-$GILTHEAD"
+  gilt_modified_files | while read file; do
+    reconstruct tree "$file"
+  done
+  BASEREV=`svn_info Revision`
+  NUMPATCHES=0
+  save
+  update_head "$GILTHEAD"
   mark_in_progress rebase
 }
 
@@ -530,6 +549,7 @@ start_rebase ()
 cmd_abort ()
 {
   test -f "$GILTROOT/.in-progress" || return 0
+  doit false && error cannot perform abort dry run
   eval abort_`cat "$GILTROOT/.in-progress"`
 }
 
@@ -639,7 +659,7 @@ cmd_checkout ()
     fi
   fi
 
-  doit eval echo \""$1"\" \> \"\$GILTROOT/HEAD\"
+  update_head "$1"
 }
 
 cmd_commit ()
@@ -660,7 +680,7 @@ cmd_dcommit ()
 {
   get_gilt_info --need-branch
   check_no_changes dcommit
-  i=${FIRSTPATCH}
+  i=${FIRSTPATCH:-1}
   cmd_reset
   cd "$SVNTOP"
   mark_in_progress dcommit
@@ -675,7 +695,7 @@ cmd_dcommit ()
     doit save
     doit patch -p0 < "$patchfile"
     { doit svn commit "`extract_commit_msg "$patchfile"`"; } || \
-      { error concurrent commit, please rebase and continue; start_rebase; }
+      { doit start_rebase; error concurrent commit, please rebase and continue; }
   done
   gilt_modified_files | while read line; do
     doit reconstruct tree "$file"
@@ -794,81 +814,94 @@ cmd_push ()
 
 cmd_rebase ()
 {
-  doit false || error cannot perform rebase dry run
+  local i conflict_solved
+  doit false && error cannot perform rebase dry run
   get_gilt_info --need-branch
+  cd $SVNTOP
   if test_in_progress rebase; then
     test "$#" = 0 || error cannot switch, rebase in progress
+    conflict_solved=:
   else
+    check_no_changes please commit existing changes before rebasing
+    FIRSTPATCH=1
     start_rebase "$@"
+    conflict_solved=false
   fi
-  get_gilt_info "rebase-$GILTHEAD"
-  gilt_modified_files | while read file; do
-    doit reconstruct base "$file"
-    doit reconstruct next "$file"
-  done
-  if test "$#" -gt 0; then
-    svn switch $SVNROOT/$BRANCH
-  else
-    svn update
-  fi
-  gilt_modified_files | while read file; do
-    doit reconstruct tree "$file"
-  done
-  i=${FIRSTPATCH}
-  while test $i -le $NUMPATCHES; do
-    echo Committing patch $i/$NUMPATCHES...
-    patchfile=$GILTROOT/$GILTHEAD/patches/$i
-    extract_commit_msg "$patchfile" > "$GILTROOT/log"
-    (cd "$GILTROOT/$GILTHEAD/next" && patch -p0 < "$patchfile")
-    cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
-    if (cd "$GILTROOT/$GILTHEAD/tree-next" && patch -p0 < "$patchfile"); then
-      gilt_modified_files | while read file; do
-        doit cp "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" && echo "M	$file"
-      done
-      gilt_has_changes || do_commit 'cat "$GILTROOT/log"'
-
-      # Apply to base for subsequent diff3 operations
+  i=${FIRSTPATCH:-1}
+eval `read`
+  while :; do
+    patchfile=$GILTROOT/${GILTHEAD#rebase-}/patches/$i
+    test -f "$patchfile" || break
+    echo Committing patch $i...
+    $conflict_solved || {
+eval `read`
       rm -rf "$GILTROOT/$GILTHEAD/base" 
-      cp -R "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
-      rm -rf "$GILTROOT/$GILTHEAD/tree" 
-      mv "$GILTROOT/$GILTHEAD/tree-next" "$GILTROOT/$GILTHEAD/tree" 
-      i=$(($i + 1))
-      BASEREV=`svn_info Revision`
-      FIRSTPATCH=$i
-      doit save
-      rm -f "$GILTROOT/log"
-
-    else
-      # Got conflicts
-      gilt_modified_files | while read file; do
-	src=$SVNTOP/$file
-	older=$GILTROOT/$GILTHEAD/base/$file
-	next=$GILTROOT/$GILTHEAD/next/$file
-        rm -f "$src~"
-        if $DIFF -u "$older" "$next" | patch "$src"; then
+      mv "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
+      cp -R "$GILTROOT/$GILTHEAD/base" "$GILTROOT/$GILTHEAD/next" 
+      (cd "$GILTROOT/$GILTHEAD/next" && patch -p0 < "$patchfile" > /dev/null)
+      rm -rf "$GILTROOT/$GILTHEAD/tree-next"
+      cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
+eval `read`
+      (cd "$GILTROOT/$GILTHEAD/tree-next" && patch -p0 < "$patchfile" > /dev/null) || {
+        # Got conflicts
+        gilt_modified_files | while read file; do
+	  src=$SVNTOP/$file
+	  older=$GILTROOT/$GILTHEAD/base/$file
+	  next=$GILTROOT/$GILTHEAD/next/$file
           rm -f "$src~"
-	else
-          mv "$src~" "$src"
-          cp "$next" "$src.mine"
-          diff3 -m -E "--diff-program=$DIFF" \
-	    -L svn -L "patch $i" -L "patch $(($i + 1))" \
-	     "$src" "$older" "$next"
-        fi
+          if $DIFF -u "$older" "$next" | patch "$src" > /dev/null; then
+            rm -f "$src~"
+            echo "M	$file"
+	  else
+	    # Is there a way to mark it as conflicted in subversion?!?
+            #cp "$next" "$src.mine"
+	    echo "C	$file"
+            diff3 -m -E "--diff-program=$DIFF" \
+	      -L svn -L "patch $((i - 1))" -L "patch $i" \
+	       "$src~" "$older" "$next" > "$src"
+            rm -f "$src~"
+          fi
+        done
+        exit 1
+      }
+
+      gilt_modified_files | while read file; do
+        cp "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" && echo "M	$file"
       done
-      exit 1
-    fi
+    }
+
+eval `read`
+    gilt_has_changes || {
+      extract_commit_msg "$patchfile" > "$GILTROOT/log"
+      do_commit 'cat "$GILTROOT/log"'
+      rm -f "$GILTROOT/log"
+    }
+
+    # Move next to base for subsequent diff3 operations
+    i=$(($i + 1))
+    FIRSTPATCH=$i
+    save
+    conflict_solved=false
   done
   mark_in_progress
-  mv "$GILTROOT/$GILTHEAD" "$GILTROOT/save-$GILTHEAD"
-  mv "$GILTROOT/rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
-  rm -rf "$GILTROOT/save-$GILTHEAD"
-  rm -rf "$GILTROOT/$GILTHEAD/base"
+  #mv "$GILTROOT/$GILTHEAD" "$GILTROOT/save-$GILTHEAD"
+  #mv "$GILTROOT/rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
+  #rm -rf "$GILTROOT/save-$GILTHEAD"
+  #rm -rf "$GILTROOT/$GILTHEAD/base"
+  #rm -rf "$GILTROOT/$GILTHEAD/tree-next"
+  #FIRSTPATCH=
+  #save "${GILTHEAD#rebase-}"
+  #update_head "${GILTHEAD#rebase-}"
 }
 
 abort_rebase ()
 {
-  get_gilt_info --need-branch
-  rm -rf "$GILTROOT/rebase-$GILTHEAD"
+  get_gilt_info
+  cmd_reset --force
+  case "$GILTHEAD" in
+    rebase-*) rm -rf "$GILTROOT/$GILTHEAD" ;;
+    *) ;;
+  esac
   mark_in_progress
 }
 
