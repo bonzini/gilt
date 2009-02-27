@@ -600,7 +600,7 @@ cmd_branch ()
     *)
       get_gilt_info --init
       case "$1" in
-        */*) error invalid character name in branch ;;
+        -* | */*) error invalid character name in branch ;;
         *) test -d "$1" && error branch "\`$1'" already exists ;;
       esac
       set -e
