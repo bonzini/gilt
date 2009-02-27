@@ -1,0 +1,229 @@
+This is gilt, a simple patch tracker that builds on (and interfaces
+with) subversion.  gilt provides a simple interface similar to that
+of git and/or git-svn, allowing to create multiple local branches
+and tracking incremental changes on the branch.
+
+Basic Q&A
+=========
+
+- What's there? Tracking patches, watching changes from the last
+  patch, showing past logs and patches, pushing a series (either
+  one patch at a time or squashed), rebasing to the top of the
+  remote branch.
+
+- What's not there? History rewriting (including --amend), cherry
+  picking, commit -m/-F.  Ah, and patches that add or remove files
+  are not supported (yet), either.  Everything else is probably too
+  complex for this simple-minded utility and you should use git-svn.
+  Including diffing from one branch to another.
+
+- Is it stable?  push and dcommit are barely tested.  Complex rebasing
+  involving conflicts could also use some testing.  Everything else
+  should work.
+
+- Why?  I didn't want to learn quilt, and sometimes getting a repository
+  ready for use with git-svn takes a day or two (and requires beefy
+  machines to pack the history).
+
+- Why a shell script?  Why not? ("why not?" is the answer).
+
+- What are the requirements?  GNU diff and GNU patch.  Point environment
+  variables DIFF and PATCH to them if they are not just "diff" and
+  "patch".  And a shell in the path that is bash or zsh and has that
+  name (unless /bin/sh is also bash or zsh).  And subversion.
+
+Short command reference
+=======================
+
+Usage: /home/bonzinip/bin/gilt COMMAND OPTIONS...
+
+Common options:
+  -q, --quiet                quiet
+  -v, --verbose              verbose
+  -x                         run with shell tracing
+
+Single-character options cannot be joined.  All options should be
+right after the subcommand, or (for common options) before it.
+
+Repository management:
+
+* gilt init
+  Creates a place to store local branches at.
+
+* gilt reset [--force] [--soft]
+  Gets out of the current local branch.
+
+  --soft gets out of the current local branch, but leaves its changes
+  in the tree.
+
+  --force does it even if there are changes or if there is no active
+  local branch (or it became invalid for some weird reason).  In the
+  latter case, and if --soft is not given, IT WIPES OUT ALL CHANGES
+  IN THE CURRENT SVN WORKING TREE!
+
+Local branch operation:
+
+* gilt add [ -a | FILE... ]
+  Tracks content of the given files or directories.  What is not
+  explicitly added will not be included in the patches.
+
+  With -a, all modified files in the current svn working tree are
+  added.
+
+  ADDING DIRECTORIES IS A NO-OP.
+
+* gilt branch BRANCH [SVN-BRANCH]
+  Creates a local branch out of the revision currently checked out,
+  or out of SVN-BRANCH if given (SVN-BRANCH is usually `trunk',
+  `branches/xxx' or `tags/xxx').
+
+  Note that a local branch will NEVER be a subbranch of another
+  local branch.  Only branches off the svn repository are possible.
+
+* gilt branch
+  Show the branches in the local repository and say which one is
+  the current one.
+
+* gilt branch [-d|-D] BRANCH
+  Eliminates a local branch.  -d only does so if it is empty, i.e.
+  has already been pushed.
+
+* gilt checkout BRANCH
+  Start working on the given local branch.
+
+* gilt checkout -b BRANCH [SVN-BRANCH]
+  Same as running `gilt branch' followed by `gilt checkout'.
+
+* gilt commit [-a | FILE...]
+  Commits all files already added, all modified files in the working
+  tree (if -a is given), or only those on the command line (which are
+  implicitly `gilt add'ed).
+
+  As for `gilt add', if you give directory names, files in those
+  directories will NOT be implicitly added.
+
+* gilt import [-pN] FILE
+  Reads a patch file and commits it.  Any text at the top is proposed
+  for the commit message.  The -pN option is passed to patch.
+  If there is no current branch, the basename of FILE is used.
+  Otherwise the patch is committed on top of the current branch.
+
+* gilt rm [FILE...]
+  Stop tracking the given files.  Will give an error if the file
+  has changes or has had changes in any of the patches already
+  committed to the branch.  In other words, it's only good to
+  fix wrong git-adds.
+
+Showing information:
+
+* gilt diff [FILE...]
+  Print diffs from current working tree to tip of current branch.
+  The diff can be restricted to only a few files or directories.
+  All diffs are emitted so that they can be applied with -p0.
+
+* gilt log [-r|--reverse] [BRANCH]
+  Concatenate all the commit messages in a branch (the current
+  branch, or BRANCH) and show them.
+
+* gilt show [BRANCH] [NUMBER]
+  Show the commit message and diff for one patch in a branch.
+  BRANCH defaults to the current branch, NUMBER defaults to
+  the last patch.
+
+* git show -a [BRANCH]
+  Concatenate all the commit messages and diffs in a branch (the
+  current branch, or BRANCH) and show them.
+
+
+Synchronization:
+
+* gilt push
+  Starts svn commit with "gilt log" as output.  At the end,
+  the current branch is emptied (so that `gilt branch -d' will
+  not complain).
+
+* gilt rebase [SVN-BRANCH]
+  Perform a svn update or switch to the given branch, and follow
+  it with a refresh of the patches.
+
+  If there are conflicts, you should fix them (no gilt resolved
+  yet, possibly the only feature I should add...) and restart
+  with just `gilt rebase'.
+
+* gilt dcommit
+  Commits each patch separately to subversion.  If anything
+  goes wrong (typically a conflict), rebase is started (discarding
+  all patches already committed of course).  After finishing
+  the rebase, only the patches that could not be committed are
+  left in the branch; run "gilt dcommit" again to finish the
+  operation.  NOT TESTED YET!!!
+
+* gilt abort
+  Abort a rebase or dcommit operation that is in progress.
+
+Example
+=======
+
+Suppose you are already in a svn repository.
+
+   $ gilt init
+   $ gilt import -p0 ~/fix-bug.patch
+
+Now the patch has been imported in a "fix-bug" branch.
+
+   $ gilt reset
+
+Out in svn land again.  Let's try to do the same thing manually.
+
+   $ gilt checkout -b fix-bug-2
+   $ patch -p0 < ~/fix-bug.patch
+
+This time, we notice that README should not be committed.
+
+   $ svn revert README
+   $ gilt add -a
+   $ gilt status
+   M foo.c
+   M bar.c
+   $ gilt diff bar.c
+   Index: bar.c
+   ===============================================================
+   --- bar.c      (local branch fix-bug-2)
+   +++ bar.c      (working copy)
+   ...
+
+Note that unlike git, "gilt add" does not stage the contents.
+What gets in the branch is determined exclusively at "gilt commit"
+time.  Which we do now:
+
+   $ gilt commit
+
+If you change branches gilt tries not to do network
+operations:
+
+   $ gilt checkout fix-bug
+   $ gilt checkout fix-bug-2
+
+Now, let's update this patch for another branch:
+
+   $ gilt rebase branches/1.0
+
+Suppose there was a conflict.  You can fix it, and then
+
+   $ gilt rebase
+
+will go on with the rebase.  Since there was only one
+patch, it will be committed right away.
+
+Now if we move between branches gilt does a `svn switch'
+behind the curtains, so it requires a network connection:
+
+   $ gilt checkout fix-bug
+   $ gilt checkout fix-bug-2
+
+To push the patch series as a single commit (which it
+already is...):
+
+   $ git push
+
+That's it.
