@@ -386,7 +386,7 @@ reconstruct ()
     dir=`dirname "$i"`
     mkdir_p "$GILTROOT/$GILTHEAD/$dest/$dir"
     cp "$i" $GILTROOT/$GILTHEAD/$dest/$i
-    svn diff "$i" | patch -R "$GILTROOT/$GILTHEAD/$dest/$i" > /dev/null
+    svn diff "$i" | $PATCH -R "$GILTROOT/$GILTHEAD/$dest/$i" > /dev/null
   done
 }
 
@@ -467,7 +467,7 @@ do_commit ()
     rm -f "$patchfile.tmp"
     test "$qv" = -v || exec > /dev/null
     { echo ; cmd_diff "$@"; } | tee -a "$patchfile" | \
-      { cd "$GILTROOT/$GILTHEAD/tree" && patch -p0; } ); then
+      { cd "$GILTROOT/$GILTHEAD/tree" && $PATCH -p0; } ); then
     doit save
   else
     rm -f "$patchfile" "$patchfile.tmp"
@@ -688,13 +688,13 @@ cmd_dcommit ()
   while test $i -le $NUMPATCHES; do
     echo Committing patch $i/$NUMPATCHES...
     patchfile=$GILTROOT/$GILTHEAD/patches/$i
-    patch -p0 --dry-run < "$patchfile" || \
+    $PATCH -p0 --dry-run < "$patchfile" || \
       { doit start_rebase; error conflicts, please rebase and continue; }
     i=$(($i + 1))
     BASEREV=`svn_info Revision`
     FIRSTPATCH=$i
     doit save
-    doit patch -p0 < "$patchfile"
+    doit $PATCH -p0 < "$patchfile"
     { doit svn commit "`extract_commit_msg "$patchfile"`"; } || \
       { doit start_rebase; error concurrent commit, please rebase and continue; }
   done
@@ -749,9 +749,9 @@ cmd_import ()
     -p*) plevel=$1 ; shift ;;
     *) plevel=-p0 ;;
   esac
-  test $# = 1 || error usage: gilt patch '[-pN]' FILE
+  test $# = 1 || error usage: gilt import '[-pN]' FILE
   patchfile="$1"
-  patch -f --dry-run "$plevel" < "$patchfile"
+  $PATCH -f --dry-run "$plevel" < "$patchfile"
   case $? in
     1) error patch does not apply cleanly, aborting ;;
     2) exit 1 ;;
@@ -763,7 +763,7 @@ cmd_import ()
     notquiet echo not on a gilt branch, creating branch "$branchname"
     cmd_checkout -b "$branchname"
   fi
-  doit patch -f "$plevel" < "$patchfile" > /dev/null
+  doit $PATCH -f "$plevel" < "$patchfile" > /dev/null
   doit cmd_add $qv -a
   doit do_commit 'extract_commit_msg "$patchfile"'
 }
@@ -842,17 +842,17 @@ cmd_rebase ()
       rm -rf "$GILTROOT/$GILTHEAD/base" 
       mv "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
       cp -R "$GILTROOT/$GILTHEAD/base" "$GILTROOT/$GILTHEAD/next" 
-      (cd "$GILTROOT/$GILTHEAD/next" && patch -p0 < "$patchfile" > /dev/null)
+      (cd "$GILTROOT/$GILTHEAD/next" && $PATCH -p0 < "$patchfile" > /dev/null)
       rm -rf "$GILTROOT/$GILTHEAD/tree-next"
       cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
-      (cd "$GILTROOT/$GILTHEAD/tree-next" && patch -p0 < "$patchfile" > /dev/null) || {
+      (cd "$GILTROOT/$GILTHEAD/tree-next" && $PATCH -p0 < "$patchfile" > /dev/null) || {
         # Got conflicts
         gilt_modified_files | while read file; do
 	  src=$SVNTOP/$file
 	  older=$GILTROOT/$GILTHEAD/base/$file
 	  next=$GILTROOT/$GILTHEAD/next/$file
           rm -f "$src~"
-          if $DIFF -u "$older" "$next" | patch "$src" -o "$src.new" > /dev/null; then
+          if $DIFF -u "$older" "$next" | $PATCH "$src" -o "$src.new" > /dev/null; then
             echo "M	$file"
 	  else
 	    # Is there a way to mark it as conflicted in subversion?!?
@@ -1000,7 +1000,8 @@ do
 done
 
 progname=$0
-DIFF=${DIFF-/usr/bin/diff}
+DIFF=${DIFF-diff}
+PATCH=${PATCH-patch}
 DIFFOPTS=${DIFFOPTS--p -u}
 
 # Parse the -q, -v, -vv, --dry-run options
