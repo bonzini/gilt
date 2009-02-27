@@ -396,12 +396,12 @@ extract_commit_msg ()
 {
   local i
   if test $# = 0; then
-    sed -n '/^Index:/q;p' "$@"
+    sed -n '/^Index:/q;/^---/q;/^diff /q;p' "$@"
   else
-    # Emulate sed -s '/^Index:/,$d'
+    # Emulate sed -s '/^Index:/,$d; /^---/,$d; /^diff /,$d'
     for i
     do
-      sed -n '/^Index:/q;p' "$i"
+      sed -n '/^Index:/q;/^---/q;/^diff /q;p' "$i"
     done
   fi
 }
