@@ -1,0 +1,980 @@
+#! /bin/sh
+
+# TODO: test
+#   abort        rebase, dcommit
+#   branch       with remote branch
+#   dcommit
+#   import
+#   rebase
+
+# test done for:
+#   add
+#   branch       -d, -D, create new branch
+#   checkout     basic, -b with switch, from reset
+#   commit
+#   diff
+#   init (with and without arguments)
+#   log
+#   push
+#   reset
+#   rm
+#   show
+#   status
+
+# sprinkle 'set -e' whenever useful
+# audit quiet/verbose/debug
+# commit --amend
+# commit -m/-F
+# import -m/-F
+# avoid forking on dirname
+
+# Shell sanitization
+# ------------------
+
+if test -n "${ZSH_VERSION+set}" && (emulate sh) >/dev/null 2>&1; then
+  emulate sh
+  NULLCMD=:
+  alias -g '${1+"$@"}'='"$@"'
+elif test -n "${BASH_VERSION+set}" && (set -o posix) >/dev/null 2>&1; then
+  set -o posix
+else
+  # Try executing under a good shell
+  if test -n "$RECURSIVE_SHELL"; then
+    echo you have a problem ; exit 1
+  fi
+  export RECURSIVE_SHELL=1
+  bash -c : > /dev/null 2>&1 && exec bash -c '$0 "$@"' $0 "$@"
+  zsh -c : > /dev/null 2>&1 && exec zsh -c '$0 "$@"' $0 "$@"
+fi
+
+# Help message (placed as soon as possible)
+# ------------
+
+usage () {
+  echo 'gilt - simple git-inspired local branch management for svn'
+  echo
+  echo "Usage: $progname COMMAND OPTIONS..."
+  echo
+  echo 'Repository management:'
+  echo '  init                         create .gilt directory'
+  echo '  reset [--force] [--soft]     get out of the current local branch'
+  echo '                               --force does so even if there are changes'
+  echo '                               --soft does not revert the branch changes'
+  echo
+  echo 'Local branch operation:'
+  echo '  abort                        abort in progress operations'
+  echo '  add [-a | FILE...]           track content of the files in the patch'
+  echo '  branch BRANCH [SVN-BRANCH]   create local branch on top of svn branch'
+  echo '  branch -d|-D BRANCH          eliminate local branch'
+  echo '  checkout BRANCH              start working on the given local branch'
+  echo '  checkout -b BRANCH [SVN-BRANCH] start working on a new local branch'
+  echo '  commit [-a | FILE...]        commit changes on top of current branch'
+  echo '  import PATCH-OPTS [< FILE]   add a patch on top of current branch'
+  echo '  rm [FILE...]                 do not track content of the files'
+  echo
+  echo 'Showing information:'
+  echo '  diff [FILE...]               print diffs with tip of current branch'
+  echo '  log [-r|--reverse] [BRANCH]  concatenate all the logs in the branch'
+  echo '  show [BRANCH] [NUMBER]       show one patch in a branch (default last)'
+  echo '  show -a [BRANCH]             show all patches in a branch'
+  echo                 
+  echo
+  echo 'Synchronization:'
+  echo '  rebase [SVN-BRANCH]          svn update or switch + refresh patches'
+  echo '  push                         starts svn commit with "gilt log" as output'
+  echo '  dcommit                      commits each patch separately'
+  echo
+  exit "$@"
+}
+
+# Technical documentation
+# -----------------------
+#
+# Structure of the repository:
+#  .gilt
+#    HEAD
+#    name (for each local branch)
+#      INFO
+#      tree/
+#        modified files
+#      patches/
+#        p1
+#        p2
+#        p3
+#        ...
+#
+# Data in the INFO file:
+# BASEURL=<svn branch url>
+# BASEREV=<svn base rev>
+# NUMPATCHES=<number of patches>
+#
+# TODO: new-files, removed-files
+
+# Functions for generic use
+# -------------------------
+
+error () {
+  echo "$progname:" "$@" >&2
+  exit 1
+}
+
+usage_error () {
+  echo "$progname:" "$@" >&2
+  usage 1
+}
+
+is_parent_of_pwd () {
+  case "$PWD" in
+    "$1"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# mkdir -p emulation based on the mkinstalldirs script.
+mkdir_p () {
+  local file pathcomp oIFS IFS d
+  for file
+  do
+    case $file in
+      /*) pathcomp=/ ;;
+      *)  pathcomp= ;;
+    esac
+    oIFS=$IFS
+    IFS=/
+    set fnord $file
+    shift
+    IFS=$oIFS
+
+    errstatus=0
+    for d
+    do
+      test "x$d" = x && continue
+      pathcomp=$pathcomp$d
+      case $pathcomp in
+        -*) pathcomp=./$pathcomp ;;
+      esac
+
+      if test ! -d "$pathcomp"; then
+        debug creating "$pathcomp"
+        mkdir "$pathcomp" || lasterr=$?
+        test -d "$pathcomp" || errstatus=$lasterr
+      fi
+      pathcomp=$pathcomp/
+    done
+  done
+  return "$errstatus"
+}
+
+squeeze_blanks ()
+{
+  sed -n '
+     # delete all (leading) blanks
+     /./!d
+
+     # get here: so there is a non empty
+     :x
+     # print it
+     p
+     # get next
+     n
+     # got chars? print it again, etc...
+     /./bx
+
+     # no, got an empty line
+     :z
+     # get next, if last line we finish here so no trailing
+     # empty lines are written
+     n
+     # also empty? then ignore it, and get next... this will
+     # remove ALL empty lines
+     /./!bz
+
+     # all empty lines were deleted/ignored, but we have a non empty.  As
+     # what we want to do is to squeeze, insert a blank line artificially
+     i\
+
+     bx'
+}
+
+
+# gilt-specific helper functions.
+# -------------------------------
+
+# svn_info FIELD
+# extract the field from the repository and echo it
+svn_info () {
+  svn info | sed -n "s/^$1: //p"
+}
+
+# svn_revert
+# same as "svn revert -R", but cheaper because it uses /tree files
+svn_revert () {
+  (cd "$SVNTOP"
+  test "$qv" = -v || exec > /dev/null
+  gilt_modified_files | xargs svn revert)
+}
+
+# get_svn_info
+# set SVNTOP, SVNROOT, SVNBRANCH, SVNSUBDIR
+get_svn_info () {
+  local newroot oldwd
+  test -d .svn || error not in a Subversion repository.
+  set -e
+  SVNROOT=`svn_info 'Repository Root'`
+  oldwd=$PWD
+  while :; do
+    SVNTOP=$PWD
+    cd ..
+    test -d .svn || break
+    newroot=`svn_info 'Repository Root'`
+    test "$newroot" != "$SVNROOT" && break
+  done
+  cd "$SVNTOP"
+  SVNBRANCH=`svn_info URL`
+  SVNBRANCH=${SVNBRANCH#$SVNROOT/}
+  cd "$oldwd"
+  SVNSUBDIR=${oldwd#$SVNTOP}
+  set +e
+  GILTROOT=${GILTROOT-$SVNTOP/.svn/.gilt}
+}
+
+# get_gilt_info [--init|--need-branch|BRANCH]
+# set GILTROOT, GILTHEAD
+# optionally set BASEURL, BASEREV, NUMPATCHES
+get_gilt_info () {
+  case "$1" in
+    '' | --*)
+      if test -f "$GILTROOT"/HEAD; then
+        GILTHEAD=`cat "$GILTROOT"/HEAD`
+      fi
+      if test -z "$GILTHEAD"; then
+        if test -d "$GILTROOT"; then
+          if test "$1" = --need-branch; then
+	    error not on a gilt branch
+          fi
+        elif test "$1" = --init; then
+          mkdir "$GILTROOT"
+        else
+          error not in a gilt tree.
+        fi
+      fi
+      ;;
+    *)
+      if test -d "$GILTROOT"; then
+        GILTHEAD="$1"
+      else
+        error not in a gilt tree.
+      fi
+      ;;
+  esac
+  if test -n "$GILTHEAD"; then
+    test -f "$GILTROOT/$GILTHEAD/INFO" || error nonexistent branch "$GILTHEAD"
+    set -e
+    . "$GILTROOT/$GILTHEAD/INFO"
+    set +e
+  fi
+}
+
+make_svn_absolute_path ()
+{
+  case $2 in
+    $SVNTOP/*) eval $1='${2#$SVNTOP/}' ;;
+    /*) return 1;;
+    *)
+      if (dir=`dirname "$file"`; cd "$dir" && is_parent_of_pwd $SVNTOP); then
+	eval $1='$SVNSUBDIR/$2'
+	eval $1='${'$1'#/}'
+      else
+	return 1
+      fi ;;
+  esac
+}
+
+files_in_patch () {
+  sed -ne 's/^Index: //p' "$@"
+  #sed -e '/^+++ /!d;s///;s/	.*//p' "$@"
+}
+
+# Conditional execution of commands
+
+cond_set ()
+{
+  eval "$1"'()
+  {
+    "$@"
+  }'
+}
+
+cond_reset ()
+{
+  eval "$1"'()
+  {
+    :
+  }'
+}
+
+# exit if the tree has changes compared to the top of the gilt branch
+# or, if there is no active gilt branch, to the top of the svn branch
+check_no_changes ()
+{
+  local line
+  if test -z "$GILTHEAD"; then
+    check_no_svn_changes "$@"
+  else
+    gilt_has_changes || error modified tree, "$@"
+  fi
+}
+
+gilt_has_changes ()
+{
+  gilt_modified_files | (while read file; do
+    cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null 2>&1 || exit 1
+  done)
+}
+
+svn_has_changes ()
+{
+  svn status -q "$@" | { read line; test "$line" = M;}
+}
+
+check_no_svn_changes ()
+{
+  local oldwd
+  oldwd=$PWD
+  cd "$SVNTOP"
+  svn status -q | grep ^M | { read line; test -z "$line";} || \
+    error modified tree, "$@"
+  cd "$oldwd"
+}
+
+# save [BRANCH]
+# save branch info to BRANCH/INFO (/INFO if FILE is omitted)
+save ()
+{
+  cat > "$GILTROOT/${1-$GILTHEAD}/INFO" <<EOF
+BASEURL='`echo $BASEURL | sed "s/'/'\\\\''/g"`'
+BASEREV='`echo $BASEREV | sed "s/'/'\\\\''/g"`'
+NUMPATCHES='`echo $NUMPATCHES | sed "s/'/'\\\\''/g"`'
+FIRSTPATCH='`echo $FIRSTPATCH | sed "s/'/'\\\\''/g"`'
+EOF
+}
+
+# reconstruct DIR FILES...
+# Copy the current svn revision of each FILE to $GILTROOT/$GILTHEAD/DIR/FILE
+reconstruct ()
+{
+  local i dest
+  dest=$1
+  shift
+  for i
+  do
+    dir=`dirname "$i"`
+    mkdir_p "$GILTROOT/$GILTHEAD/$dest/$dir"
+    cp "$i" $GILTROOT/$GILTHEAD/$dest/$i
+    svn diff "$i" | patch -R "$GILTROOT/$GILTHEAD/$dest/$i" > /dev/null
+  done
+}
+
+# extract_commit_msg FILES...
+# Extract the commit message from the FILES
+extract_commit_msg ()
+{
+  local i
+  if test $# = 0; then
+    sed -n '/^Index:/q;p' "$@"
+  else
+    # Emulate sed -s '/^Index:/,$d'
+    for i
+    do
+      sed -n '/^Index:/q;p' "$i"
+    done
+  fi
+}
+
+mark_in_progress ()
+{
+  if test -n "$1"; then
+    echo "$1" > "$GILTROOT/.in-progress"
+  else
+    rm -f "$GILTROOT/.in-progress"
+  fi
+}
+
+test_in_progress ()
+{
+  local op
+  test -f "$GILTROOT/.in-progress" || return 0
+  op=`cat "$GILTROOT/.in-progress"` = "$1" && return 0
+  test $op = "$1" && return 0
+  error $op in progress, continue or abort
+}
+
+gilt_modified_files ()
+{
+  (cd "$GILTROOT/$GILTHEAD/tree" && find . -type f | sed 's,^\./,,')
+}
+
+do_commit ()
+{
+  local commit_msg_cmd
+  NUMPATCHES=$(($NUMPATCHES + 1))
+  patchfile="$GILTROOT/$GILTHEAD/patches/$NUMPATCHES"
+  if (set -e
+    commit_msg_cmd="$1"
+    shift
+    { eval "$commit_msg_cmd"; echo; cmd_status "$@" | sed 's/^/# /'; } > "$patchfile.tmp"
+    ${EDITOR-vi} "$patchfile.tmp"
+    grep -v '^#' "$patchfile.tmp" | squeeze_blanks > "$patchfile"
+    test -s "$patchfile" || error empty commit message, aborting
+    grep -v '^Index:' "$patchfile" > /dev/null || error invalid commit message, aborting
+    rm -f "$patchfile.tmp"
+    test "$qv" = -v || exec > /dev/null
+    { echo ; cmd_diff "$@"; } | tee -a "$patchfile" | \
+      { cd "$GILTROOT/$GILTHEAD/tree" && patch -p0; } ); then
+    doit save
+  else
+    rm -f "$patchfile" "$patchfile.tmp"
+  fi
+}
+
+do_add ()
+{
+  local dir file
+  test -f "$GILTROOT/$GILTHEAD/tree/$1" && return 0
+  oldwd=$PWD
+  cd "$SVNTOP"
+  doit reconstruct tree "$1"
+  notquiet echo "A	$1"
+  cd "$oldwd"
+}
+
+do_rm ()
+{
+  if test "$1" = -f; then
+    test -f "$GILTROOT/$GILTHEAD/tree/$2" || return 0
+    shift
+  fi
+  test -f "$GILTROOT/$GILTHEAD/tree/$1" || error untracked file
+  cmp "$SVNTOP/$1" "$GILTROOT/$GILTHEAD/tree/$1" > /dev/null || \
+    error file "$1" has changes
+  if grep -xF "Index: $1" "$GILTROOT/$GILTHEAD"/patches/* > /dev/null; then
+    error patches have changes for "$1"
+  fi
+  doit rm -f "$GILTROOT/$GILTHEAD/tree/$1"
+  notquiet echo "R	$1"
+}
+
+clear_stack ()
+{
+  NUMPATCHES=0
+  FIRSTPATCH=
+  BASEREV=`svn info $BASEURL | sed -n 's/Revision: //'`
+  doit rm -rf "$GILTROOT/GILTHEAD"/patches/*
+  doit save
+}
+
+start_rebase ()
+{
+  rm -rf "$GILTROOT/rebase-$GILTHEAD"
+  doit cp -R "$GILTROOT/$GILTHEAD" "$GILTROOT/rebase-$GILTHEAD"
+  if test "$#" -gt 0; then
+    BASEURL=$SVNROOT/${1-SVNBRANCH}
+    BASEREV=`svn info $BASEURL | sed -n 's/Revision: //p'`
+  fi
+  doit save "rebase-$GILTHEAD"
+  mark_in_progress rebase
+}
+
+# Command implementations
+# -----------------------
+
+cmd_abort ()
+{
+  test -f "$GILTROOT/.in-progress" || return 0
+  eval abort_`cat "$GILTROOT/.in-progress"`
+}
+
+cmd_add ()
+{
+  local file
+  get_gilt_info --need-branch
+  if test "$1" = -a ; then
+    cd "$SVNTOP"
+    svn status | sed -n 's/^[AM]      //p' | while read absfile; do
+      do_add $absfile
+    done
+  else
+    for file
+    do
+      make_svn_absolute_path absfile $file || error file not in the svn repository
+      do_add $absfile
+    done
+  fi
+}
+
+cmd_branch ()
+{
+  if test "$#" = 0; then
+    get_gilt_info
+    cd $GILTROOT
+    ls */INFO | sed 's,/INFO$,,'
+    echo current branch: ${GILTHEAD-'<none>'}
+    exit 0
+  fi
+
+  case "$1" in
+    -d|-D)
+      get_gilt_info
+      curbranch="$GILTHEAD"
+      test $# -ne 2 && error usage: gilt branch -d BRANCH
+      get_gilt_info "$2"
+      if test "$1" = -d && test "$NUMPATCHES" -gt 0; then
+	error unpushed commits, cannot delete branch
+      fi
+      test "$GILTHEAD" = "$curbranch" && doit cmd_reset --soft --force
+      doit rm -rf "$GILTROOT/$GILTHEAD"
+      exit 0
+      ;;
+    -*)
+      error unknown branch option "\`$1'"
+      ;;
+    *)
+      get_gilt_info --init
+      test -d "$1" && error branch "\`$1'" already exists
+      set -e
+      NUMPATCHES=0
+      BASEURL=$SVNROOT/${2-$SVNBRANCH}
+      if test "${2-$SVNBRANCH}" != "$SVNBRANCH"; then
+	check_no_changes please commit them before switching branch
+        doit svn_revert
+        doit svn switch $qv $BASEURL
+      fi
+      BASEREV=`svn_info Revision`
+      doit mkdir_p "$GILTROOT/$1/patches"
+      doit mkdir_p "$GILTROOT/$1/tree"
+      doit save "$1"
+      set +e
+      ;;
+  esac
+}
+
+cmd_checkout ()
+{
+  if test $# = 0; then
+    error expected branch name
+  fi
+  if test "$1" = -b; then
+    if test $# -gt 3; then
+      error usage: gilt checkout -b BRANCH SVN-BRANCH
+    fi
+    shift
+    doit cmd_branch "$@"
+  else
+    if test $# -gt 1; then
+      error usage: gilt checkout BRANCH
+    fi
+
+    get_gilt_info
+    check_no_changes cannot checkout "$1"
+    get_gilt_info "$1"
+    cd $SVNTOP
+    if (set -e;
+      doit svn_revert
+
+      # Make sure to work disconnected if possible
+      currev=`svn_info Revision`
+      if test "${BASEURL#$SVNROOT/}:$BASEREV" != "$SVNBRANCH:$currev"; then
+        doit svn switch $qv -r$BASEREV $BASEURL
+      fi
+      gilt_modified_files | while read file; do
+        notquiet cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null || echo "M	$file"
+        doit cp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file"
+      done); then
+        :
+    else
+      doit reset --force
+      error errors occurred, no gilt branch is currently checked out
+    fi
+  fi
+
+  doit eval echo \""$1"\" \> \"\$GILTROOT/HEAD\"
+}
+
+cmd_commit ()
+{
+  local patchfile
+  get_gilt_info --need-branch
+
+  # TODO: -m and -F options
+  if test "$1" = -a; then
+    test "$#" -gt 1 && error cannot pass -a and files together
+    doit cmd_add $qv -a
+    shift
+  fi
+  do_commit 'echo' "$@"
+}
+
+cmd_dcommit ()
+{
+  get_gilt_info --need-branch
+  check_no_changes dcommit
+  i=${FIRSTPATCH}
+  cmd_reset
+  cd "$SVNTOP"
+  mark_in_progress dcommit
+  set -e
+  while test $i -le $NUMPATCHES; do
+    echo Committing patch $i/$NUMPATCHES...
+    patchfile=$GILTROOT/$GILTHEAD/patches/$i
+    patch -p0 --dry-run < "$patchfile" || error 'conflicts, please rebase'
+    i=$(($i + 1))
+    BASEREV=`svn_info Revision`
+    FIRSTPATCH=$i
+    doit save
+    doit patch -p0 < "$patchfile"
+    { doit svn commit "`extract_commit_msg "$patchfile"`"; } || \
+      { error concurrent commit, please rebase and continue; start_rebase; }
+  done
+  gilt_modified_files | while read line; do
+    doit reconstruct tree "$file"
+  done
+  clear_stack
+  mark_in_progress
+}
+
+abort_dcommit ()
+{
+  error sorry, unimplemented
+}
+
+cmd_diff ()
+{
+  local file
+  get_gilt_info --need-branch
+  if test $# = 0; then
+    cd $SVNTOP
+    SVNSUBDIR=
+    set .
+  else
+    # TODO: grep on the output of find (that's why there's a 'set .' above)
+    error sorry, unimplemented
+  fi
+  if test "$qv" != -q; then
+    gilt_modified_files | while read file; do
+      cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null 2>&1 && continue
+      echo "Index: $file"
+      echo '==================================================================='
+      $DIFF $DIFFOPTS -L "$file	(branch $GILTHEAD)" \
+	 -L "$file	(working copy)" \
+	"$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file"
+    done
+  fi
+  gilt_has_changes
+  exit $?
+}
+
+
+cmd_import ()
+{
+  get_gilt_info --need-branch
+  # TODO: add common handling of -m and -F to commit and import
+  patch "$dry_run" "$@"
+  doit cmd_add $qv -a
+  do_commit 'echo'
+}
+
+cmd_init ()
+{
+  get_gilt_info --init
+  test $# -gt 0 && doit checkout -b "$1"
+}
+
+cmd_log ()
+{
+  case "$1" in
+    -r|--reverse) reverse=: ; shift; ;;
+    *) reverse=false ;;
+  esac
+
+  if test -z "$1"; then
+    get_gilt_info --need-branch
+  else
+    get_gilt_info "$1"
+  fi
+
+  if $reverse; then
+    i=1
+    while test $i -le $NUMPATCHES; do
+      extract_commit_msg "$GILTROOT/$GILTHEAD/patches/$i"
+      i=$(($i + 1))
+    done
+  else
+    i=$NUMPATCHES
+    while test $i -gt 0; do
+      extract_commit_msg "$GILTROOT/$GILTHEAD/patches/$i"
+      i=$(($i - 1))
+    done
+  fi
+}
+
+cmd_push ()
+{
+  get_gilt_info --need-branch
+  check_no_changes push
+  set -e
+  { cmd_log
+  echo
+  echo '--This line, and those below, will be ignored--'
+  svn status | grep -v '^?'; } > "$GILTROOT/$GILTHEAD/log"
+  ${EDITOR-vi} "$GILTROOT/$GILTHEAD/log"
+  doit svn commit -F"$GILTROOT/$GILTHEAD/log"
+  doit cmd_reset --soft
+  doit clear_stack
+  rm "$GILTROOT/$GILTHEAD/log"
+}
+
+cmd_rebase ()
+{
+  doit false || error cannot perform rebase dry run
+  get_gilt_info --need-branch
+  if test_in_progress rebase; then
+    test "$#" = 0 || error cannot switch, rebase in progress
+  else
+    start_rebase "$@"
+  fi
+  get_gilt_info "rebase-$GILTHEAD"
+  gilt_modified_files | while read file; do
+    doit reconstruct base "$file"
+    doit reconstruct next "$file"
+  done
+  if test "$#" -gt 0; then
+    svn switch $BASEURL
+  else
+    svn update
+  fi
+  gilt_modified_files | while read file; do
+    doit reconstruct tree "$file"
+  done
+  i=${FIRSTPATCH}
+  while test $i -le $NUMPATCHES; do
+    echo Committing patch $i/$NUMPATCHES...
+    patchfile=$GILTROOT/$GILTHEAD/patches/$i
+    extract_commit_msg "$patchfile" > "$GILTROOT/log"
+    (cd "$GILTROOT/$GILTHEAD/next" && patch -p0 < "$patchfile")
+    cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
+    if (cd "$GILTROOT/$GILTHEAD/tree-next" && patch -p0 < "$patchfile"); then
+      gilt_modified_files | while read file; do
+        doit cp "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" && echo "M	$file"
+      done
+      gilt_has_changes || do_commit 'cat "$GILTROOT/log"'
+
+      # Apply to base for subsequent diff3 operations
+      rm -rf "$GILTROOT/$GILTHEAD/base" 
+      cp -R "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
+      rm -rf "$GILTROOT/$GILTHEAD/tree" 
+      mv "$GILTROOT/$GILTHEAD/tree-next" "$GILTROOT/$GILTHEAD/tree" 
+      i=$(($i + 1))
+      BASEREV=`svn_info Revision`
+      FIRSTPATCH=$i
+      doit save
+      rm -f "$GILTROOT/log"
+
+    else
+      # Got conflicts
+      gilt_modified_files | while read file; do
+	src=$SVNTOP/$file
+	older=$GILTROOT/$GILTHEAD/base/$file
+	next=$GILTROOT/$GILTHEAD/next/$file
+        rm -f "$src~"
+        if $DIFF -u "$older" "$next" | patch "$src"; then
+          rm -f "$src~"
+	else
+          mv "$src~" "$src"
+          cp "$next" "$src.mine"
+          diff3 -m -E "--diff-program=$DIFF" \
+	    -L svn -L "patch $i" -L "patch $(($i + 1))" \
+	     "$src" "$older" "$next"
+        fi
+      done
+      exit 1
+    fi
+  done
+  mark_in_progress
+  mv "$GILTROOT/$GILTHEAD" "$GILTROOT/save-$GILTHEAD"
+  mv "$GILTROOT/rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
+  rm -rf "$GILTROOT/save-$GILTHEAD"
+  rm -rf "$GILTROOT/$GILTHEAD/base"
+}
+
+abort_rebase ()
+{
+  get_gilt_info --need-branch
+  rm -rf "$GILTROOT/rebase-$GILTHEAD"
+  mark_in_progress
+}
+
+cmd_reset ()
+{
+  local force soft
+  get_gilt_info
+  force=false
+  soft=false
+  for i
+  do
+    case $i in
+      --force) force=: ;;
+      --soft) soft=: ;;
+      *) error invalid option ;;
+    esac
+  done
+  cd "$SVNTOP"
+  $force || check_no_changes cannot reset
+  $soft || doit svn_revert
+  doit rm -f "$GILTROOT"/HEAD
+}
+
+cmd_rm ()
+{
+  local file f
+  get_gilt_info --need-branch
+  if test $1 = -f; then
+    f=-f; shift
+  fi
+  for file
+  do
+    make_svn_absolute_path absfile $file || error file not in the svn repository
+    do_rm $f $absfile
+  done
+}
+
+cmd_show ()
+{
+  local all
+  if test "$1" = -a; then
+    all=:
+    shift
+  else
+    all=false
+  fi
+  case "$1" in
+    *[a-z]*) get_gilt_info "$1"; shift ;;
+    *) get_gilt_info --need-branch ;;
+  esac
+  if $all; then
+    i=1
+    while test $i -le $NUMPATCHES; do
+      echo patch "$i/$NUMPATCHES":
+      cat "$GILTROOT/$GILTHEAD/patches/$i"
+      i=$(($i + 1))
+      echo
+    done
+  else
+    if test $NUMPATCHES = 0; then
+      echo branch is empty
+    else
+      patch=${2-$NUMPATCHES}
+      test -f "$GILTROOT/$GILTHEAD/patches/$patch" || error invalid patch "\`$patch'"
+      cat "$GILTROOT/$GILTHEAD/patches/$patch"
+    fi
+  fi
+}
+
+cmd_status ()
+{
+  local file
+  get_gilt_info --need-branch
+  if test $# = 0; then
+    cd $SVNTOP
+    SVNSUBDIR=
+    set .
+  else
+    # TODO: grep on the output of find (that's why there's a 'set .' above)
+    error sorry, unimplemented
+  fi
+  gilt_modified_files | while read file; do
+    cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null || echo "M	$file"
+  done
+}
+
+# Main driver
+# -----------
+
+# More sanitization (NLS nuisances).
+for i in LANG LANGUAGE LC_ALL LC_COLLATE LC_CTYPE 
+do
+  eval $i=C; export $i
+done
+
+progname=$0
+DIFF=${DIFF-/usr/bin/diff}
+DIFFOPTS=${DIFFOPTS--p -u}
+
+# Parse the -q, -v, -vv, --dry-run options
+qv=
+dry_run=
+cond_set notquiet
+cond_reset quiet
+cond_reset verbose
+cond_reset debug
+cond_set doit
+
+first=:
+for i
+do
+  # Clear options after for loop starts
+  if $first; then
+    set fnord
+    first=false
+  fi
+  case "$i" in
+    -x)
+      set -x ;;	
+    --dry-run)
+      dry_run=--dry-run
+      cond_reset doit ;;
+    -q | --quiet)
+      qv=-q
+      cond_set quiet
+      cond_reset notquiet
+      cond_reset verbose
+      cond_reset debug ;;
+    -v | --verbose)
+      qv=-v
+      cond_reset quiet
+      verbose cond_set debug
+      cond_set notquiet
+      cond_set verbose ;;
+    -vv)
+      qv=-v
+      cond_reset quiet
+      cond_set debug
+      cond_set notquiet
+      cond_set verbose ;;
+    *)
+      set "$@" "$i"
+      ;;
+  esac
+done
+shift
+
+unset first
+unset i
+
+cmdname=${1-help}
+shift
+case $cmdname in
+  --help|-h|help) usage ;;
+
+  abort | add | branch | checkout | commit | dcommit | \
+  diff | import | init | log | push | rebase | \
+  reset | rm | show | status) ;;
+
+  -*) usage_error unknown option "\`$cmdname'" ;;
+  *) usage_error unknown command "\`$cmdname'" ;;
+esac
+
+get_svn_info
+if test "$cmdname" != abort; then
+  test_in_progress "$cmdname" 
+fi
+eval cmd_$cmdname \"\$@\"
