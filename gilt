@@ -62,7 +62,6 @@ usage () {
   echo '                               --soft does not revert the branch changes'
   echo
   echo 'Local branch operation:'
-  echo '  abort                        abort in progress operations'
   echo '  add [-a | FILE...]           track content of the files in the patch'
   echo '  branch BRANCH [SVN-BRANCH]   create local branch on top of svn branch'
   echo '  branch -d|-D BRANCH          eliminate local branch'
@@ -80,6 +79,7 @@ usage () {
   echo                 
   echo
   echo 'Synchronization:'
+  echo '  abort                        abort in progress operations'
   echo '  rebase [SVN-BRANCH]          svn update or switch + refresh patches'
   echo '  push                         starts svn commit with "gilt log" as output'
   echo '  dcommit                      commits each patch separately'
