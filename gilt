@@ -209,9 +209,10 @@ svn_info () {
 # svn_revert
 # same as "svn revert -R", but cheaper because it uses /tree files
 svn_revert () {
+  # TODO: avoid xargs -r
   (cd "$SVNTOP"
   test "$qv" = -v || exec > /dev/null
-  gilt_modified_files | xargs svn revert)
+  gilt_modified_files | xargs -r -d'\n' svn revert)
 }
 
 # get_svn_info
