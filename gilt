@@ -427,8 +427,9 @@ test_in_progress ()
 
 gilt_modified_files ()
 {
-  local absfile regex escape_regex
+  local absfile regex escape_regex pipe
   escape_regex='s,[][\\/.*^$],\\&,g'
+  pipe=
   (cd "$GILTROOT/$GILTHEAD/tree" && find . -type f) |
   if test $# = 0; then
     sed 's,^\./,,'
@@ -443,10 +444,11 @@ gilt_modified_files ()
       fi
       absfile=`echo "$absfile" | sed "$escape_regex" `
       if test -d "$SVNTOP/$absfile"; then  
-        regex="$regex${regex:+|}^$absfile\\/"
+        regex="$regex$pipe^$absfile\\/"
       else
-        regex="$regex${regex:+|}^$absfile\$"
+        regex="$regex$pipe^$absfile\$"
       fi
+      pipe='\|'
     done
     sed -ne 's,^\./,,' -e "/$regex/p"
   fi
