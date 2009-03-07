@@ -239,11 +239,30 @@ get_svn_info () {
   GILTROOT=${GILTROOT-$SVNTOP/.svn/.gilt}
 }
 
+# test_gilt_branch BRANCH
+test_gilt_branch () {
+  case "$1" in
+    '' | -* | */* | . | ..)
+      error bad branch name
+      ;;
+    *)
+      if test -d "$GILTROOT"; then
+        test -f "$GILTROOT/$1/INFO" || error nonexistent branch "$1"
+      else
+        error not in a gilt tree.
+      fi
+      ;;
+  esac
+  return 0
+}
+
 # get_gilt_info [--init|--need-branch|BRANCH]
-# set GILTROOT, GILTHEAD
-# optionally set BRANCH, BASEREV, NUMPATCHES
+# set GILTHEAD and possibly set BRANCH, BASEREV, NUMPATCHES
 get_gilt_info () {
   case "$1" in
+    */* | . | ..)
+      error bad branch name
+      ;;
     '' | --*)
       if test -f "$GILTROOT"/HEAD; then
         GILTHEAD=`cat "$GILTROOT"/HEAD`
@@ -259,9 +278,6 @@ get_gilt_info () {
           error not in a gilt tree.
         fi
       fi
-      ;;
-    */*)
-      error bad branch name
       ;;
     *)
       if test -d "$GILTROOT"; then
@@ -641,11 +657,12 @@ cmd_checkout ()
     fi
 
     get_gilt_info
+    test_gilt_branch "$1"
     check_no_changes cannot checkout "$1"
-    get_gilt_info "$1"
     cd $SVNTOP
     if (set -e;
       doit svn_revert
+      get_gilt_info "$1"
 
       # Make sure to work disconnected if possible
       currev=`svn_info Revision`
