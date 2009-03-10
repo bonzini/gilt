@@ -402,7 +402,7 @@ reconstruct ()
   do
     dir=`dirname "$i"`
     mkdir_p "$GILTROOT/$GILTHEAD/$dest/$dir"
-    cp "$i" $GILTROOT/$GILTHEAD/$dest/$i
+    cp ${qvv} "$i" $GILTROOT/$GILTHEAD/$dest/$i
     svn diff "$i" | $PATCH -R "$GILTROOT/$GILTHEAD/$dest/$i" > /dev/null
   done
 }
@@ -541,7 +541,7 @@ start_rebase ()
 {
   rm -rf "$GILTROOT/rebase-$GILTHEAD"
   mkdir_p "$GILTROOT/rebase-$GILTHEAD/patches"
-  cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/rebase-$GILTHEAD/tree"
+  cp ${qvv} -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/rebase-$GILTHEAD/tree"
   cmd_reset --force
   GILTHEAD=rebase-$GILTHEAD
   gilt_modified_files | while read file; do
@@ -862,12 +862,12 @@ cmd_rebase ()
     test -f "$patchfile" || break
     echo Committing patch $i...
     $conflict_solved || {
-      rm -rf "$GILTROOT/$GILTHEAD/base" 
-      mv "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
-      cp -R "$GILTROOT/$GILTHEAD/base" "$GILTROOT/$GILTHEAD/next" 
+      rm ${qvv} -rf "$GILTROOT/$GILTHEAD/base" 
+      mv ${qvv} "$GILTROOT/$GILTHEAD/next" "$GILTROOT/$GILTHEAD/base" 
+      cp ${qvv} -R "$GILTROOT/$GILTHEAD/base" "$GILTROOT/$GILTHEAD/next" 
       (cd "$GILTROOT/$GILTHEAD/next" && $PATCH -p0 < "$patchfile" > /dev/null)
-      rm -rf "$GILTROOT/$GILTHEAD/tree-next"
-      cp -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
+      rm ${qvv} -rf "$GILTROOT/$GILTHEAD/tree-next"
+      cp ${qvv} -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
       (cd "$GILTROOT/$GILTHEAD/tree-next" && $PATCH -p0 < "$patchfile" > /dev/null) || {
         # Got conflicts
         gilt_modified_files | while read file; do
@@ -891,7 +891,7 @@ cmd_rebase ()
       }
 
       gilt_modified_files | while read file; do
-        cp "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" && echo "M	$file"
+        cp ${qvv} "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" && echo "M	$file"
       done
     }
 
@@ -1032,6 +1032,7 @@ DIFFOPTS=${DIFFOPTS--p -u}
 
 # Parse the -q, -v, -vv, --dry-run options
 qv=
+qvv=
 dry_run=
 cond_set notquiet
 cond_reset quiet
@@ -1067,6 +1068,7 @@ do
       cond_set verbose ;;
     -vv)
       qv=-v
+      qvv=-v
       cond_reset quiet
       cond_set debug
       cond_set notquiet
