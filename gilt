@@ -949,7 +949,10 @@ cmd_reset ()
     get_gilt_info
     check_no_changes cannot reset
   }
-  $soft || doit svn_revert
+  $soft || {
+    get_gilt_info
+    doit svn_revert
+  }
   doit rm -f "$GILTROOT"/HEAD
 }
 
