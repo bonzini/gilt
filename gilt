@@ -113,13 +113,17 @@ usage () {
 # Functions for generic use
 # -------------------------
 
-error () {
+error_msg () {
   echo "$progname:" "$@" >&2
+}
+
+error () {
+  error_msg "$@"
   exit 1
 }
 
 usage_error () {
-  echo "$progname:" "$@" >&2
+  error_msg "$@"
   usage 1
 }
 
@@ -351,7 +355,7 @@ check_no_changes ()
 {
   local line
   if test -z "$GILTHEAD"; then
-    check_no_svn_changes "$@"
+    return 0
   else
     gilt_has_changes || error modified tree, "$@"
   fi
@@ -364,19 +368,18 @@ gilt_has_changes ()
   done)
 }
 
-svn_has_changes ()
+check_no_overlapping_changes ()
 {
-  svn status -q "$@" | { read line; test "$line" = M;}
-}
-
-check_no_svn_changes ()
-{
+  # TODO: avoid xargs -r
   local oldwd
   oldwd=$PWD
   cd "$SVNTOP"
-  svn status -q | grep ^M | { read line; test -z "$line";} || \
-    error modified tree, "$@"
-  cd "$oldwd"
+  if gilt_modified_files "$@" | xargs -r -d'\n' svn status -q 2>/dev/null | \
+      { read line; test "$line" = M; }; then
+    return 1
+  else
+    return 0
+  fi
 }
 
 # save [BRANCH]
@@ -627,7 +630,8 @@ cmd_branch ()
       NUMPATCHES=0
       BRANCH=${2-$SVNBRANCH}
       if test "$BRANCH" != "$SVNBRANCH"; then
-	check_no_changes please commit them before switching branch
+        check_no_changes please commit or discard changes before switching branch
+        doit cmd_reset --soft --force
         doit svn_revert
         doit svn switch $qv $SVNROOT/$BRANCH
       fi
@@ -650,6 +654,8 @@ cmd_checkout ()
       error usage: gilt checkout -b BRANCH SVN-BRANCH
     fi
     shift
+    get_gilt_info
+    check_no_changes please commit or discard changes before branching
     doit cmd_branch "$@"
   else
     if test $# -gt 1; then
@@ -657,27 +663,46 @@ cmd_checkout ()
     fi
 
     get_gilt_info
+    check_no_changes please commit or discard changes before switching branch
     test_gilt_branch "$1"
-    check_no_changes cannot checkout "$1"
     cd $SVNTOP
-    if (set -e;
-      doit svn_revert
-      get_gilt_info "$1"
-
-      # Make sure to work disconnected if possible
-      currev=`svn_info Revision`
-      if test "$BRANCH:$BASEREV" != "$SVNBRANCH:$currev"; then
-        doit svn switch $qv -r$BASEREV $SVNROOT/$BRANCH
+    (set -e;
+      if test -n "$GILTHEAD"; then
+	doit svn_revert
+	OLDGILTHEAD=$GILTHEAD
       fi
+      get_gilt_info "$1"
+      ok=:
+      if check_no_overlapping_changes; then
+	# Make sure to work disconnected if possible
+	currev=`svn_info Revision`
+	if test "$BRANCH:$BASEREV" != "$SVNBRANCH:$currev"; then
+	  doit svn switch $qv -r$BASEREV $SVNROOT/$BRANCH
+	fi
+      else
+	error_msg changes overlap branch being checked out, cannot proceed
+	if test -z "$OLDGILTHEAD"; then
+	  exit 1
+	fi
+	# Doh, we have to restore the status quo.
+	get_gilt_info "$OLDGILTHEAD"
+	ok=false
+	qv=${qvv}
+	cond_reset notquiet
+      fi
+
       gilt_modified_files | while read file; do
         notquiet cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null || echo "M	$file"
-        doit cp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file"
-      done); then
-        :
-    else
-      doit cmd_reset --force
-      error errors occurred, no gilt branch is currently checked out
-    fi
+        doit cp ${qvv} "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file"
+      done
+      $ok || exit 77)
+    case $? in
+      0) ;;
+      77) exit 1 ;;
+      *)
+	doit cmd_reset --force
+	error errors occurred, no gilt branch is currently checked out ;;
+    esac
   fi
 
   update_head "$1"
@@ -702,7 +727,7 @@ cmd_commit ()
 cmd_dcommit ()
 {
   get_gilt_info --need-branch
-  check_no_changes dcommit
+  check_no_changes please commit or discard changes before dcommit
   i=${FIRSTPATCH:-1}
   cmd_reset
   cd "$SVNTOP"
@@ -828,7 +853,7 @@ cmd_log ()
 cmd_push ()
 {
   get_gilt_info --need-branch
-  check_no_changes push
+  check_no_changes please commit or discard changes before pushing
   set -e
   { cmd_log
   echo
@@ -851,7 +876,7 @@ cmd_rebase ()
     test "$#" = 0 || error cannot switch, rebase in progress
     conflict_solved=:
   else
-    check_no_changes please commit existing changes before rebasing
+    check_no_changes please commit or discard changes before rebasing
     FIRSTPATCH=1
     start_rebase "$@"
     conflict_solved=false
