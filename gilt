@@ -461,10 +461,11 @@ gilt_modified_files ()
         regex=^
         break
       fi
-      absfile=`echo "$absfile" | sed "$escape_regex" `
       if test -d "$SVNTOP/$absfile"; then  
+        absfile=`echo "$absfile" | sed "$escape_regex" `
         regex="$regex$pipe^$absfile\\/"
       else
+        absfile=`echo "$absfile" | sed "$escape_regex" `
         regex="$regex$pipe^$absfile\$"
       fi
       pipe='\|'
