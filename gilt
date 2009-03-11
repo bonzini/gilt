@@ -602,7 +602,7 @@ cmd_branch ()
     cd $GILTROOT
     ls */INFO | sed 's,/INFO$,,'
     echo current branch: ${GILTHEAD-'<none>'}
-    exit 0
+    return 0
   fi
 
   case "$1" in
@@ -616,7 +616,7 @@ cmd_branch ()
       fi
       test "$GILTHEAD" = "$curbranch" && doit cmd_reset --soft --force
       doit rm -rf "$GILTROOT/$GILTHEAD"
-      exit 0
+      return 0
       ;;
     -*)
       error unknown branch option "\`$1'"
@@ -699,7 +699,7 @@ cmd_checkout ()
       $ok || exit 77)
     case $? in
       0) ;;
-      77) exit 1 ;;
+      77) return 1 ;;
       *)
 	doit cmd_reset --force
 	error errors occurred, no gilt branch is currently checked out ;;
@@ -784,7 +784,7 @@ cmd_diff ()
     done
   fi
   gilt_has_changes "$@"
-  exit $?
+  return $?
 }
 
 
@@ -803,7 +803,7 @@ cmd_import ()
   $PATCH -f --dry-run "$plevel" < "$patchfile"
   case $? in
     1) error patch does not apply cleanly, aborting ;;
-    2) exit 1 ;;
+    2) return 1 ;;
   esac
   set -e
   if test -z "$GILTHEAD"; then
@@ -913,7 +913,7 @@ cmd_rebase ()
           fi
           mv "$src.new" "$src"
         done
-        exit 1
+        return 1
       }
 
       gilt_modified_files | while read file; do
