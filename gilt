@@ -1021,7 +1021,7 @@ cmd_show ()
     if test $NUMPATCHES = 0; then
       echo branch is empty
     else
-      patch=${2-$NUMPATCHES}
+      patch=${1-$NUMPATCHES}
       test -f "$GILTROOT/$GILTHEAD/patches/$patch" || error invalid patch "\`$patch'"
       cat "$GILTROOT/$GILTHEAD/patches/$patch"
     fi
