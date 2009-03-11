@@ -368,6 +368,17 @@ gilt_has_changes ()
   done)
 }
 
+do_status ()
+{
+  gilt_modified_files "$@" | while read file; do
+    if cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null; then
+      :
+    else
+      echo "M	$file"
+    fi
+  done
+}
+
 check_no_overlapping_changes ()
 {
   # TODO: avoid xargs -r
@@ -476,24 +487,49 @@ gilt_modified_files ()
 
 do_commit ()
 {
-  local commit_msg_cmd
-  NUMPATCHES=$(($NUMPATCHES + 1))
-  patchfile="$GILTROOT/$GILTHEAD/patches/$NUMPATCHES"
-  if (set -e
-    commit_msg_cmd="$1"
-    shift
-    { eval "$commit_msg_cmd"; echo; cmd_status "$@" | sed 's/^/# /'; } > "$patchfile.tmp"
-    ${EDITOR-vi} "$patchfile.tmp"
-    grep -v '^#' "$patchfile.tmp" | squeeze_blanks > "$patchfile"
-    test -s "$patchfile" || error empty commit message, aborting
-    grep -v '^Index:' "$patchfile" > /dev/null || error invalid commit message, aborting
-    rm -f "$patchfile.tmp"
-    test "$qv" = -v || exec > /dev/null
-    { echo ; cmd_diff "$@"; } | tee -a "$patchfile" | \
-      { cd "$GILTROOT/$GILTHEAD/tree" && $PATCH -p0; } ); then
-    doit save
+  local commit_msg_cmd patchfile basepatch newpatch
+  set +e
+  basepatch=$1
+  if test "${2-'--'}" != --; then
+    commit_msg_cmd=$2
+    shift 3
   else
-    rm -f "$patchfile" "$patchfile.tmp"
+    commit_msg_cmd='if test -f "$patchfile"; then extract_commit_msg "$patchfile"; else echo; fi'
+    shift 2
+  fi
+  newpatch=$(($basepatch + 1))
+  patchfile="$GILTROOT/$GILTHEAD/patches/$newpatch"
+  gilt_has_changes "$@" && error cannot commit empty changeset
+  if (set -e
+    { eval "$commit_msg_cmd"; echo; do_status "$@" | sed 's/^/# /'; } > "$patchfile.log"
+    ${EDITOR-vi} "$patchfile.log"
+    grep -v '^#' "$patchfile.log" | squeeze_blanks > "$patchfile.tmp"
+    test -s "$patchfile.tmp" || error empty commit message, aborting
+    egrep '^(---|+++|Index:)' "$patchfile.tmp" > /dev/null || error invalid commit message, aborting
+    # undo last patch if amending
+    if test -f "$patchfile"; then
+      (test "$qvv" = -v || exec > /dev/null
+      cd "$GILTROOT/$GILTHEAD/tree"
+      doit $PATCH -p0 -R < "$patchfile")
+    fi
+    if cmd_diff "$@" > "$patchfile.patch"; then
+      test "$qvv" = -v || exec > /dev/null
+      cd "$GILTROOT/$GILTHEAD/tree"
+      doit $PATCH -p0 < "$patchfile"
+      error amended changeset would be empty
+    else
+      test "$qv" = -v || exec > /dev/null
+      cd "$GILTROOT/$GILTHEAD/tree"
+      doit $PATCH -p0 < "$patchfile.patch"
+    fi
+    doit false || { echo | cat "$patchfile.tmp" - "$patchfile.patch" > "$patchfile"; }); then
+    NUMPATCHES=$newpatch
+    doit save
+    rm -f "$patchfile.log" "$patchfile.patch" "$patchfile.tmp"
+    return 0
+  else
+    rm -f "$patchfile" "$patchfile.log" "$patchfile.patch" "$patchfile.tmp"
+    return 1
   fi
 }
 
@@ -711,18 +747,47 @@ cmd_checkout ()
 
 cmd_commit ()
 {
-  local patchfile
+  local add_all add_files amend
+
   get_gilt_info --need-branch
 
   # TODO: -m and -F options
-  if test "$1" = -a; then
-    test "$#" -gt 1 && error cannot pass -a and files together
+  add_all=false
+  add_files=false
+  amend=false
+  while test $# -gt 0; do
+    case "$1" in
+      -a)
+        add_all=:
+	shift
+	;;
+      --amend)
+	amend=:
+	shift
+	;;
+      -*)
+	error invalid option "$1"
+	;;
+      *)
+        add_files=:
+	break
+	;;
+    esac
+  done
+  if $add_all && $add_files; then
+    error cannot pass -a and files together
+  elif $add_all; then
     doit cmd_add $qv -a
-    shift
-  elif test "$#" -gt 0; then
+  elif $add_files; then
     doit cmd_add $qv "$@"
   fi
-  do_commit 'echo' "$@"
+  if $amend; then
+    test $NUMPATCHES -gt 0 || error cannot amend, no patch added to branch yet
+    test $# -gt 0 || error --amend with paths not implemented yet
+    do_commit $(($NUMPATCHES - 1)) -- "$@"
+  else
+    do_commit $NUMPATCHES -- "$@"
+  fi
 }
 
 cmd_dcommit ()
@@ -814,7 +879,7 @@ cmd_import ()
   fi
   doit $PATCH -f "$plevel" < "$patchfile" > /dev/null
   doit cmd_add $qv -a
-  doit do_commit 'extract_commit_msg "$patchfile"'
+  doit do_commit $NUMPATCHES --
 }
 
 cmd_init ()
@@ -923,7 +988,7 @@ cmd_rebase ()
 
     gilt_has_changes || {
       extract_commit_msg "$patchfile" > "$GILTROOT/log"
-      do_commit 'cat "$GILTROOT/log"'
+      do_commit $NUMPATCHES 'cat "$GILTROOT/log"' --
       rm -f "$GILTROOT/log"
     }
 
@@ -1037,9 +1102,9 @@ cmd_status ()
     SVNSUBDIR=
     set .
   fi
-  gilt_modified_files "$@" | while read file; do
-    cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null || echo "M	$file"
-  done
+  do_status "$@"
+  gilt_has_changes "$@"
+  return $?
 }
 
 # Main driver
