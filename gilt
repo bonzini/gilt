@@ -813,14 +813,15 @@ cmd_dcommit ()
     echo Committing patch $i/$NUMPATCHES...
     patchfile=$GILTROOT/$GILTHEAD/patches/$i
     $PATCH -p0 --dry-run < "$patchfile" || \
-      { mark_in_progress; echo conflicts, starting rebase; exec cmd_rebase; }
+      { mark_in_progress; message conflicts, starting rebase; exec cmd_rebase; }
+    doit $PATCH -p0 < "$patchfile"
+    { doit svn commit "`extract_commit_msg "$patchfile"`"; } || \
+      { doit $PATCH -p0 -R < "$patchfile"; mark_in_progress;
+	message concurrent commit, starting rebase; exec cmd_rebase; }
     i=$(($i + 1))
     BASEREV=`svn_info Revision`
     FIRSTPATCH=$i
     doit save
-    doit $PATCH -p0 < "$patchfile"
-    { doit svn commit "`extract_commit_msg "$patchfile"`"; } || \
-      { mark_in_progress; echo concurrent commit, trying to rebase...; cmd_rebase; }
   done
   gilt_modified_files | while read line; do
     doit reconstruct tree "$file"
