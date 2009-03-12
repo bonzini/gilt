@@ -437,6 +437,10 @@ extract_commit_msg ()
   fi
 }
 
+message () {
+  notquiet echo "$progname:" "$@"
+}
+
 mark_in_progress ()
 {
   if test -n "$1"; then
@@ -696,7 +700,7 @@ cmd_checkout ()
     check_no_changes please commit or discard changes before branching
     doit cmd_branch "$@"
     get_gilt_info "$1"
-    echo the changes in branch "\`$OLDGILTHEAD'" are still in the tre
+    message the changes in branch "\`$OLDGILTHEAD'" are still in the tre
     (cd "$GILTROOT/$OLDGILTHEAD/tree" && find . -type f) | while read file; do
       do_add "$file"
     done
@@ -880,7 +884,7 @@ cmd_import ()
   if test -z "$GILTHEAD"; then
     branchname=`basename "$branchname"`
     branchname=${1%.*}
-    notquiet echo not on a gilt branch, creating branch "$branchname"
+    message not on a gilt branch, creating branch "$branchname"
     cmd_checkout -b "$branchname"
   fi
   doit $PATCH -f "$plevel" < "$patchfile" > /dev/null
@@ -1090,7 +1094,7 @@ cmd_show ()
     done
   else
     if test $NUMPATCHES = 0; then
-      echo branch is empty
+      message branch is empty
     else
       patch=${1-$NUMPATCHES}
       test -f "$GILTROOT/$GILTHEAD/patches/$patch" || error invalid patch "\`$patch'"
