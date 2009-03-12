@@ -793,7 +793,7 @@ cmd_commit ()
   fi
   if $amend; then
     test $NUMPATCHES -gt 0 || error cannot amend, no patch added to branch yet
-    test $# -gt 0 || error --amend with paths not implemented yet
+    test $# -eq 0 || error --amend with paths not implemented yet
     do_commit $(($NUMPATCHES - 1)) -- "$@"
   else
     do_commit $NUMPATCHES -- "$@"
