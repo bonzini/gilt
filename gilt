@@ -80,7 +80,7 @@ usage () {
   echo
   echo 'Synchronization:'
   echo '  abort                        abort in progress operations'
-  echo '  rebase [SVN-BRANCH]          svn update or switch + refresh patches'
+  echo '  rebase [-rREV | SVN-BRANCH]  svn update or switch + refresh patches'
   echo '  push                         starts svn commit with "gilt log" as output'
   echo '  dcommit                      commits each patch separately'
   echo
@@ -591,11 +591,22 @@ start_rebase ()
   gilt_modified_files | while read file; do
     reconstruct next "$file"
   done
-  if test "$#" -gt 0; then
-    BRANCH=${1-SVNBRANCH}
+  case "$#:$1" in
+    *:-r)
+      svn update ${qv} -r"$2"
+      shift 2
+      ;;
+    *:-r*)
+      svn update ${qv} "$1"
+      shift
+      ;;
+    0:)
+      svn update
+      ;;
+  esac
+  if test $# -gt 0; then
+    BRANCH=$1
     svn switch ${qv} $SVNROOT/$BRANCH
-  else
-    svn update ${qv}
   fi
   gilt_modified_files | while read file; do
     reconstruct tree "$file"
