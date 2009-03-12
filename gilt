@@ -981,14 +981,17 @@ cmd_rebase ()
       (cd "$GILTROOT/$GILTHEAD/next" && $PATCH -p0 < "$patchfile" > /dev/null)
       rm ${qvv} -rf "$GILTROOT/$GILTHEAD/tree-next"
       cp ${qvv} -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/$GILTHEAD/tree-next" 
-      (cd "$GILTROOT/$GILTHEAD/tree-next" && $PATCH -p0 < "$patchfile" > /dev/null) || {
+      (cd "$GILTROOT/$GILTHEAD/tree-next" && $PATCH -p0 -N < "$patchfile" > /dev/null) || {
         # Got conflicts
         gilt_modified_files | while read file; do
 	  src=$SVNTOP/$file
 	  older=$GILTROOT/$GILTHEAD/base/$file
 	  next=$GILTROOT/$GILTHEAD/next/$file
           rm -f "$src~"
-          if $DIFF -u "$older" "$next" | $PATCH "$src" -o "$src.new" > /dev/null; then
+	  if $DIFF -u "$older" "$next" | $PATCH --dry-run -R "$src" > /dev/null; then
+	    # Patch already applied
+	    :
+          elif $DIFF -u "$older" "$next" | $PATCH -N "$src" -o "$src.new" > /dev/null; then
             echo "M	$file"
 	  else
 	    # Is there a way to mark it as conflicted in subversion?!?
