@@ -692,8 +692,14 @@ cmd_checkout ()
     fi
     shift
     get_gilt_info
+    OLDGILTHEAD=$GILTHEAD
     check_no_changes please commit or discard changes before branching
     doit cmd_branch "$@"
+    get_gilt_info "$1"
+    echo the changes in branch "\`$OLDGILTHEAD'" are still in the tre
+    (cd "$GILTROOT/$OLDGILTHEAD/tree" && find . -type f) | while read file; do
+      do_add "$file"
+    done
   else
     if test $# -gt 1; then
       error usage: gilt checkout BRANCH
