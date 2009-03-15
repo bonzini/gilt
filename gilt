@@ -591,6 +591,7 @@ start_rebase ()
   gilt_modified_files | while read file; do
     reconstruct next "$file"
   done
+  set -e
   case "$#:$1" in
     *:-r)
       svn update ${qv} -r"$2"
@@ -600,7 +601,7 @@ start_rebase ()
       svn update ${qv} "$1"
       shift
       ;;
-    0:)
+    *)
       svn update
       ;;
   esac
@@ -608,6 +609,7 @@ start_rebase ()
     BRANCH=$1
     svn switch ${qv} $SVNROOT/$BRANCH
   fi
+  set +e
   gilt_modified_files | while read file; do
     reconstruct tree "$file"
   done
