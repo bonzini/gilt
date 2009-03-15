@@ -994,7 +994,7 @@ cmd_rebase ()
           rm -f "$src~"
 	  if $DIFF -u "$older" "$next" | $PATCH --dry-run -R "$src" > /dev/null; then
 	    # Patch already applied
-	    :
+	    continue
           elif $DIFF -u "$older" "$next" | $PATCH -N "$src" -o "$src.new" > /dev/null; then
             echo "M	$file"
 	  else
