@@ -394,7 +394,7 @@ check_no_overlapping_changes ()
 }
 
 # save [BRANCH]
-# save branch info to BRANCH/INFO (/INFO if FILE is omitted)
+# save branch info to BRANCH/INFO
 save ()
 {
   cat > "$GILTROOT/${1-$GILTHEAD}/INFO" <<EOF
@@ -583,11 +583,11 @@ update_head ()
 
 start_rebase ()
 {
-  rm -rf "$GILTROOT/rebase-$GILTHEAD"
-  mkdir_p "$GILTROOT/rebase-$GILTHEAD/patches"
-  cp ${qvv} -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/rebase-$GILTHEAD/tree"
+  rm -rf "$GILTROOT/.rebase-$GILTHEAD"
+  mkdir_p "$GILTROOT/.rebase-$GILTHEAD/patches"
+  cp ${qvv} -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/.rebase-$GILTHEAD/tree"
   cmd_reset --force
-  GILTHEAD=rebase-$GILTHEAD
+  GILTHEAD=.rebase-$GILTHEAD
   gilt_modified_files | while read file; do
     reconstruct next "$file"
   done
@@ -869,7 +869,7 @@ cmd_diff ()
       cmp "$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file" > /dev/null 2>&1 && continue
       echo "Index: $file"
       echo '==================================================================='
-      $DIFF $DIFFOPTS -L "$file	(branch $GILTHEAD)" \
+      $DIFF $DIFFOPTS -L "$file	(branch ${GILTHEAD#.rebase-})" \
 	 -L "$file	(working copy)" \
 	"$GILTROOT/$GILTHEAD/tree/$file" "$SVNTOP/$file"
     done
@@ -975,7 +975,7 @@ cmd_rebase ()
   fi
   i=${FIRSTPATCH:-1}
   while :; do
-    patchfile=$GILTROOT/${GILTHEAD#rebase-}/patches/$i
+    patchfile=$GILTROOT/${GILTHEAD#.rebase-}/patches/$i
     test -f "$patchfile" || break
     echo Committing patch $i...
     $conflict_solved || {
@@ -1028,9 +1028,9 @@ cmd_rebase ()
     conflict_solved=false
   done
   mark_in_progress
-  GILTHEAD=${GILTHEAD#rebase-}
+  GILTHEAD=${GILTHEAD#.rebase-}
   mv "$GILTROOT/$GILTHEAD" "$GILTROOT/save-$GILTHEAD"
-  mv "$GILTROOT/rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
+  mv "$GILTROOT/.rebase-$GILTHEAD" "$GILTROOT/$GILTHEAD"
   rm -rf "$GILTROOT/save-$GILTHEAD"
   rm -rf "$GILTROOT/$GILTHEAD/base"
   rm -rf "$GILTROOT/$GILTHEAD/next"
@@ -1045,7 +1045,7 @@ abort_rebase ()
   get_gilt_info
   cmd_reset --force
   case "$GILTHEAD" in
-    rebase-*) rm -rf "$GILTROOT/$GILTHEAD" ;;
+    .rebase-*) rm -rf "$GILTROOT/$GILTHEAD" ;;
     *) ;;
   esac
   mark_in_progress
