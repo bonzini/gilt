@@ -9,28 +9,30 @@ Basic Q&A
 - What's there? Tracking patches, watching changes from the last
   patch, showing past logs and patches, pushing a series (either
   one patch at a time or squashed), rebasing to the top of the
-  remote branch.
+  remote branch, commit --amend.
 
-- What's not there? History rewriting (including --amend), cherry
-  picking, commit -m/-F.  Ah, and patches that add or remove files
-  are not supported (yet), either.  Everything else is probably too
-  complex for this simple-minded utility and you should use git-svn.
-  Including diffing from one branch to another.
+- What's not there? Cherry picking, commit -m/-F.  The single biggest
+  missing piece is supporting patches that add or remove files.
+  Everything else is probably too complex for this simple-minded utility
+  and you should use git-svn.  Including diffing from one branch to
+  another.
 
-- Is it stable?  push and dcommit are barely tested.  Complex rebasing
-  involving conflicts could also use some testing.  Everything else
-  should work.
+- Is it stable?  push and dcommit are barely tested.  Everything else
+  should work, including conflicts during rebasing.  
 
 - Why?  I didn't want to learn quilt, and sometimes getting a repository
   ready for use with git-svn takes a day or two (and requires beefy
-  machines to pack the history).
+  machines to pack the history).  After a couple of months using gilt
+  I really enjoy it, so it was not a bad choice in my opinion.
 
 - Why a shell script?  Why not? ("why not?" is the answer).
 
-- What are the requirements?  GNU diff and GNU patch.  Point environment
-  variables DIFF and PATCH to them if they are not just "diff" and
-  "patch".  And a shell in the path that is bash or zsh and has that
-  name (unless /bin/sh is also bash or zsh).  And subversion.
+- What are the requirements?  GNU versions of diff, patch and coreutils.
+  Point environment variables DIFF and PATCH to them if they are not just
+  "diff" and "patch".  From coreutils actually only xargs is needed, and
+  it needs to be in the path.  You also need a shell in the path that is
+  bash or zsh, and it must have that name unless /bin/sh is also bash or
+  zsh.  And subversion.
 
 Short command reference
 =======================
@@ -148,7 +150,8 @@ Synchronization:
 
   If there are conflicts, you should fix them (no gilt resolved
   yet, possibly the only feature I should add...) and restart
-  with just `gilt rebase'.
+  with just `gilt rebase'.  Note that conflicts are not marked
+  as such in the subversion metadata.
 
 * gilt dcommit
   Commits each patch separately to subversion.  If anything
