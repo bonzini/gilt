@@ -992,7 +992,10 @@ cmd_rebase ()
 	  older=$GILTROOT/$GILTHEAD/base/$file
 	  next=$GILTROOT/$GILTHEAD/next/$file
           rm -f "$src~"
-	  if $DIFF -u "$older" "$next" | $PATCH --dry-run -R "$src" > /dev/null; then
+	  if cmp "$older" "$next" > /dev/null 2>&1; then
+	    # No change
+	    continue
+	  elif $DIFF -u "$older" "$next" | $PATCH --dry-run -R "$src" > /dev/null; then
 	    # Patch already applied
 	    continue
           elif $DIFF -u "$older" "$next" | $PATCH -N "$src" -o "$src.new" > /dev/null; then
@@ -1011,7 +1014,10 @@ cmd_rebase ()
       }
 
       gilt_modified_files | while read file; do
-        cp ${qvv} "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" && echo "M	$file"
+        cmp "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file" >/dev/null 2>&1 || {
+	  echo "M	$file"
+          cp ${qvv} "$GILTROOT/$GILTHEAD/tree-next/$file" "$SVNTOP/$file"
+	}
       done
     }
 
