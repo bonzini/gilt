@@ -1015,6 +1015,9 @@ cmd_rebase ()
           fi
           mv "$src.new" "$src"
         done
+	echo "There might have been conflicts in the patch, or the merge might"
+	echo "require some attention.  Check the results and restart by"
+	echo "reinvoking 'gilt rebase', or alternatively abort with 'gilt abort'."
         return 1
       }
 
