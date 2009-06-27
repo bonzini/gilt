@@ -687,8 +687,10 @@ cmd_branch ()
       BRANCH=${2-$SVNBRANCH}
       if test "$BRANCH" != "$SVNBRANCH"; then
         check_no_changes please commit or discard changes before switching branch
-        doit cmd_reset --soft --force
-        doit svn_revert
+        if test -n "$GILTHEAD"; then
+	  doit svn_revert
+          doit cmd_reset --soft --force
+	fi
         doit svn switch $qv $SVNROOT/$BRANCH
       fi
       BASEREV=`svn_info Revision`
