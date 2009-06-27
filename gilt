@@ -583,6 +583,7 @@ update_head ()
 
 start_rebase ()
 {
+  cd $SVNTOP
   rm -rf "$GILTROOT/.rebase-$GILTHEAD"
   mkdir_p "$GILTROOT/.rebase-$GILTHEAD/patches"
   cp ${qvv} -R "$GILTROOT/$GILTHEAD/tree" "$GILTROOT/.rebase-$GILTHEAD/tree"
@@ -658,6 +659,7 @@ cmd_branch ()
     return 0
   fi
 
+  cd $SVNTOP
   case "$1" in
     -d|-D)
       get_gilt_info
@@ -703,6 +705,7 @@ cmd_checkout ()
   if test $# = 0; then
     error expected branch name
   fi
+  cd $SVNTOP
   if test "$1" = -b; then
     if test $# -gt 3; then
       error usage: gilt checkout -b BRANCH SVN-BRANCH
