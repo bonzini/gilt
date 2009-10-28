@@ -1079,14 +1079,9 @@ cmd_reset ()
     esac
   done
   cd "$SVNTOP"
-  $force || {
-    get_gilt_info
-    check_no_changes cannot reset
-  }
-  $soft || {
-    get_gilt_info
-    doit svn_revert
-  }
+  get_gilt_info --need-branch
+  $force || check_no_changes cannot reset
+  $soft || doit svn_revert
   doit rm -f "$GILTROOT"/HEAD
 }
 
