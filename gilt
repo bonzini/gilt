@@ -554,10 +554,11 @@ do_rm ()
   if test "$1" = -f; then
     test -f "$GILTROOT/$GILTHEAD/tree/$2" || return 0
     shift
+  else
+    test -f "$GILTROOT/$GILTHEAD/tree/$1" || error untracked file
+    cmp "$SVNTOP/$1" "$GILTROOT/$GILTHEAD/tree/$1" > /dev/null || \
+      error file "$1" has changes
   fi
-  test -f "$GILTROOT/$GILTHEAD/tree/$1" || error untracked file
-  cmp "$SVNTOP/$1" "$GILTROOT/$GILTHEAD/tree/$1" > /dev/null || \
-    error file "$1" has changes
   if test "$NUMPATCHES" -gt 0; then
     if grep -xF "Index: $1" "$GILTROOT/$GILTHEAD"/patches/* > /dev/null; then
       error patches have changes for "$1"
