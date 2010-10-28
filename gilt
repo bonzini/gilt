@@ -681,7 +681,7 @@ cmd_branch ()
       get_gilt_info --init
       case "$1" in
         -* | */*) error invalid character name in branch ;;
-        *) test -d "$1" && error branch "\`$1'" already exists ;;
+        *) test -d "$GILTROOT/$1" && error branch "\`$1'" already exists ;;
       esac
       set -e
       NUMPATCHES=0
@@ -716,7 +716,7 @@ cmd_checkout ()
     shift
     get_gilt_info
     check_no_changes please commit or discard changes before branching
-    doit cmd_branch "$@"
+    doit cmd_branch "$@" || return $?
     if test -n "$GILTHEAD"; then
       OLDGILTHEAD=$GILTHEAD
       get_gilt_info "$1"
